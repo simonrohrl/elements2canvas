@@ -12,7 +12,7 @@ mkdir -p chromium
 cd chromium
 
 if [ ! -d "src" ]; then
-    caffeinate fetch --nohooks --no-history chromium
+    caffeinate fetch --no-history chromium
 fi
 
 cd src

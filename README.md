@@ -49,7 +49,7 @@ If you want to modify a new file or change your logic:
 2. Modify the code and test the build.
 3. Once satisfied, generate a new patch file:
    ```bash
-   git diff > ../../patches/00X-new-feature.patch
+   git diff > ../../patches/my-new-feature.patch
    ```
 4. Commit the new patch file to this GitHub repository.
 
