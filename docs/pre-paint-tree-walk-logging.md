@@ -50,8 +50,6 @@ This patch requires the `node-tree-debug.patch` to be applied first, as it depen
 
 ## Filtering
 
-The logging only triggers for:
-- Renderer processes (checked via `--type=renderer` command line flag)
-- Main frame documents (not iframes)
+The logging only triggers for Main frame documents (not iframes) and the renderer process type, which prevents browser UI from being logged.
 
 This prevents excessive logging from subframes and non-renderer processes.
