@@ -1,0 +1,37 @@
+diff --git a/chrome/app/chrome_main_delegate.cc b/chrome/app/chrome_main_delegate.cc
+index 1cbcce0303..d3281d414b 100644
+--- a/chrome/app/chrome_main_delegate.cc
++++ b/chrome/app/chrome_main_delegate.cc
+@@ -1063,6 +1063,32 @@ std::optional<int> ChromeMainDelegate::BasicStartupComplete() {
+   ash::BootTimesRecorder::Get()->SaveChromeMainStats();
+ #endif
+ 
++  // Append default flags so users don't need to pass them on the CLI.
++  base::CommandLine* cmd = base::CommandLine::ForCurrentProcess();
++
++  if(!cmd->HasSwitch(::switches::kRunAllCompositorStagesBeforeDraw))
++    cmd->AppendSwitch(::switches::kRunAllCompositorStagesBeforeDraw)
++
++  if (!cmd->HasSwitch(::switches::kEnableLogging))
++    cmd->AppendSwitch(::switches::kEnableLogging);
++
++  if (!cmd->HasSwitch(::switches::kV))
++    cmd->AppendSwitchASCII(::switches::kV, "0");
++
++#if BUILDFLAG(IS_MAC)
++  if (!cmd->HasSwitch(os_crypt::switches::kUseMockKeychain))
++    cmd->AppendSwitch(os_crypt::switches::kUseMockKeychain);
++#endif
++
++  std::string disable_features =
++      cmd->GetSwitchValueASCII(::switches::kDisableFeatures);
++  if (disable_features.find("DialMediaRouteProvider") == std::string::npos) {
++    if (!disable_features.empty())
++      disable_features += ",";
++    disable_features += "DialMediaRouteProvider";
++    cmd->AppendSwitchASCII(::switches::kDisableFeatures, disable_features);
++  }
++
+   const base::CommandLine& command_line =
+       *base::CommandLine::ForCurrentProcess();
+ 
