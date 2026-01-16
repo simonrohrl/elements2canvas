@@ -9,4 +9,4 @@ chromium/src/third_party/*
 chromium/src/third_party/blink/web_tests/
 chromium/src/third_party/blink/perf_tests/
 !chromium/src/cc/
-chromium/src/cc/*
+!chromium/src/cc/*
