@@ -16,6 +16,20 @@ Building Chromium is resource-intensive. Ensure your machine meets these minimum
 - **RAM:** 16GB minimum (32GB+ recommended).
 - **OS:** macOs (currently the setup is only targeted for macOs, other OSes will be supported soon)
 
+## 0. Prerequisites
+
+For building, you will need **Xcode** and **Homebrew**.
+
+You will need to install `caffeinate` to prevent your machine from going to sleep during the fetch process.
+```bash
+brew install caffein
+
+```
+You will also need to install `ccache` to speed up subsequent builds.
+```bash
+brew install ccache
+```
+
 ## 1. Initial Setup (Bootstrap)
 
 Before building, you must download the Chromium source code and the Google `depot_tools` suite. This only needs to be done once.
@@ -25,7 +39,7 @@ chmod +x scripts/*.sh
 ./scripts/bootstrap.sh
 ```
 
-**Note:** This step will download huge amount of data. Depending on your connection, it may take several hours.
+**Note:** This step will download huge amount of data. Depending on your connection, it may take an hour.
 
 ## 2. Workflow and Patching
 
@@ -46,7 +60,7 @@ To apply the patches, run the apply patches script.
 ```
 
 ## 3. Building
-To build the browser, run the build script.
+To build the browser, run the build script. The first build will take several hours, but subsequent builds will be much faster.
 ```bash
 ./scripts/build.sh
 ```
