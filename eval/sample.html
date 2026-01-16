@@ -1,32 +1,10 @@
+<script>
+    function changeText() {
+        document.querySelector("p").textContent = "Text changed";
+    }
+</script>
+
 <body>
-    <div id="target" style="width: 1px; height: 1px; position: fixed; top: 0; left: 0;"></div>
-  
-    <script>
-      const target = document.getElementById("target");
-      let count = 0;
-  
-      // Use a large Prime Number as an increment.
-      // This ensures colors look "unique" and different every frame immediately,
-      // rather than just slowly turning from black to dark blue.
-      const JUMP = 132497; 
-      const MAX_COLOR = 16777216; // 2^24 (total possible 24-bit colors)
-  
-      function changeColor() {
-        // 1. Increment the counter
-        count = (count + JUMP) % MAX_COLOR;
-  
-        // 2. Use Bitwise Shifts to extract R, G, and B
-        // This is the fastest way to handle color math in JS
-        const r = (count >> 16) & 0xff;
-        const g = (count >> 8) & 0xff;
-        const b = count & 0xff;
-  
-        // 3. Apply via Template Literal
-        target.style.backgroundColor = `rgb(${r},${g},${b})`;
-  
-        requestAnimationFrame(changeColor);
-      }
-  
-      requestAnimationFrame(changeColor);
-    </script>
-  </body>
+    <p>Initial text</p>
+    <button onclick="changeText()">Change Text</button>
+</body>
