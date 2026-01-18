@@ -82,7 +82,7 @@ index c580313c33..5426191d2c 100644
    if (node) {
      std::stringstream stream;
 diff --git a/third_party/blink/renderer/core/dom/node.h b/third_party/blink/renderer/core/dom/node.h
-index c637e01b20..276ac976a5 100644
+index c637e01b20..012dc58331 100644
 --- a/third_party/blink/renderer/core/dom/node.h
 +++ b/third_party/blink/renderer/core/dom/node.h
 @@ -900,14 +900,14 @@ class CORE_EXPORT Node : public EventTarget {
@@ -103,3 +103,16 @@ index c637e01b20..276ac976a5 100644
    String ToMarkedFlatTreeString(const Node* marked_node1,
                                  const char* marked_label1,
                                  const Node* marked_node2 = nullptr,
+@@ -1398,10 +1398,11 @@ CORE_EXPORT std::ostream& operator<<(std::ostream&, const Node*);
+ 
+ }  // namespace blink
+ 
++void ShowTree(const blink::Node*);
++
+ #if DCHECK_IS_ON()
+ // Outside the blink namespace for ease of invocation from gdb.
+ void ShowNode(const blink::Node*);
+-void ShowTree(const blink::Node*);
+ void ShowNodePath(const blink::Node*);
+ #endif
+ 
