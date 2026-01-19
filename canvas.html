@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>CanvasKit drawTextBlob Demo</title>
+    <script src="https://unpkg.com/canvaskit-wasm@0.39.1/bin/full/canvaskit.js"></script>
+    <style>
+      canvas {
+        border: 1px solid #ccc;
+        display: block;
+        margin: 20px auto;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="demo-canvas" width="500" height="300"></canvas>
+
+    <script type="module">
+      const CK_URL = "https://unpkg.com/canvaskit-wasm@0.39.1/bin/full/";
+
+      async function init() {
+        const CanvasKit = await CanvasKitInit({
+          locateFile: (file) => CK_URL + file,
+        });
+        
+        const canvasElement = document.getElementById("demo-canvas");
+        const surface = CanvasKit.MakeCanvasSurface(canvasElement);
+
+        // Load your local font (requires a local web server)
+        const fontResp = await fetch("arial.ttf");
+        const fontData = await fontResp.arrayBuffer();
+        const typeface = CanvasKit.Typeface.MakeFreeTypeFaceFromData(fontData);
+
+        if (!typeface) {
+          console.error("Failed to load typeface. Ensure arial.ttf is in the same folder.");
+          return;
+        }
+
+        const font = new CanvasKit.Font(typeface, 40);
+        const paint = new CanvasKit.Paint();
+        paint.setColor(CanvasKit.Color(0, 150, 255, 1));
+        paint.setAntiAlias(true);
+
+        // 1. Define Glyph IDs (must be a Uint16Array)
+        const glyphIds = new Uint16Array([
+          40, 81, 87, 72, 85, 3, 92, 82, 88, 85, 3, 81, 68, 80, 72
+        ]);
+
+        // 2. Define RSXforms (4 floats per glyph: [scos, ssin, tx, ty])
+        // scos: Scale * Cos(rotation)
+        // ssin: Scale * Sin(rotation)
+        // tx/ty: Translation (X/Y position)
+        const rsxforms = new Float32Array(glyphIds.length * 4);
+
+        for (let i = 0; i < glyphIds.length; i++) {
+          const x = 50 + i * 25;
+          const y = 150 + Math.sin(i * 0.8) * 10; // Wavy effect
+
+          rsxforms[i * 4]     = Math.sqrt(2)/2; // scos (scale 1.0, rotate 0)
+          rsxforms[i * 4 + 1] = Math.sqrt(2)/2; // ssin
+          rsxforms[i * 4 + 2] = x;   // X position
+          rsxforms[i * 4 + 3] = y;   // Y position
+        }
+
+        // 3. Create the blob directly using the factory method
+        const blob = CanvasKit.TextBlob.MakeFromRSXformGlyphs(glyphIds, rsxforms, font);
+
+        surface.drawOnce((canvas) => {
+          canvas.clear(CanvasKit.WHITE);
+          
+          // Draw the blob
+          canvas.drawTextBlob(blob, 0, 0, paint);
+
+          // 4. Memory Cleanup
+          blob.delete();
+          font.delete();
+          typeface.delete();
+          paint.delete();
+        });
+      }
+
+      init();
+    </script>
+  </body>
+</html>

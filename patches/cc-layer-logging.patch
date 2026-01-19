@@ -1,0 +1,1290 @@
+diff --git a/cc/layers/picture_layer_impl.cc b/cc/layers/picture_layer_impl.cc
+index 033299bc49..f93a7e7cf3 100644
+--- a/cc/layers/picture_layer_impl.cc
++++ b/cc/layers/picture_layer_impl.cc
+@@ -1897,7 +1897,8 @@ void PictureLayerImpl::AsValueInto(
+       LCDTextDisallowedReasonToString(lcd_text_disallowed_reason_));
+ 
+   state->BeginArray("pictures");
+-  raster_source_->AsValueInto(state);
++  // Use AsValueIntoWithPaintOps for verbose logging with full paint op details
++  raster_source_->AsValueIntoWithPaintOps(state);
+   state->EndArray();
+ 
+   state->BeginArray("invalidation");
+diff --git a/cc/paint/paint_shader.h b/cc/paint/paint_shader.h
+index 29dc5c26dd..95dd6333f7 100644
+--- a/cc/paint/paint_shader.h
++++ b/cc/paint/paint_shader.h
+@@ -196,6 +196,15 @@ class CC_PAINT_EXPORT PaintShader : public SkRefCnt {
+   SkTileMode ty() const { return ty_; }
+   SkRect tile() const { return tile_; }
+ 
++  // Gradient accessors for serialization
++  const std::vector<SkColor4f>& colors() const { return colors_; }
++  const std::vector<SkScalar>& positions() const { return positions_; }
++  SkPoint start_point() const { return start_point_; }
++  SkPoint end_point() const { return end_point_; }
++  SkPoint center() const { return center_; }
++  SkScalar start_radius() const { return start_radius_; }
++  SkScalar end_radius() const { return end_radius_; }
++
+   bool IsOpaque() const;
+ 
+   // Returns true if the shader looks like it is valid (ie the members required
+diff --git a/cc/raster/raster_source.cc b/cc/raster/raster_source.cc
+index 2aabb687de..514b389400 100644
+--- a/cc/raster/raster_source.cc
++++ b/cc/raster/raster_source.cc
+@@ -8,6 +8,8 @@
+ 
+ #include <algorithm>
+ 
++#include "base/compiler_specific.h"
++
+ #include "base/metrics/histogram_macros.h"
+ #include "base/trace_event/trace_event.h"
+ #include "cc/base/math_util.h"
+@@ -16,9 +18,19 @@
+ #include "cc/paint/clear_for_opaque_raster.h"
+ #include "cc/paint/display_item_list.h"
+ #include "cc/paint/image_provider.h"
++#include "cc/paint/paint_op.h"
++#include "cc/paint/paint_shader.h"
++#include "cc/paint/paint_filter.h"
++#include "cc/paint/paint_op_buffer.h"
++#include "cc/paint/paint_op_buffer_iterator.h"
+ #include "cc/paint/skia_paint_canvas.h"
+ #include "components/viz/common/traced_value.h"
+ #include "third_party/skia/include/core/SkCanvas.h"
++#include "third_party/skia/include/core/SkRRect.h"
++#include "third_party/skia/include/core/SkTextBlob.h"
++#include "third_party/skia/include/core/SkRSXform.h"
++#include "third_party/skia/include/utils/SkParsePath.h"
++#include "third_party/skia/src/core/SkTextBlobPriv.h"
+ #include "ui/gfx/geometry/axis_transform2d.h"
+ #include "ui/gfx/geometry/rect_conversions.h"
+ 
+@@ -174,6 +186,564 @@ void RasterSource::AsValueInto(base::trace_event::TracedValue* array) const {
+                                   array);
+ }
+ 
++namespace {
++
++// Forward declaration for recursive serialization
++void SerializePaintOpRecursive(const PaintOp& op,
++                               base::trace_event::TracedValue* state);
++
++void SerializeTextBlob(const SkTextBlob* blob,
++                       base::trace_event::TracedValue* state) {
++  if (!blob) {
++    return;
++  }
++
++  // Serialize bounds
++  const SkRect& bounds = blob->bounds();
++  state->BeginArray("bounds");
++  state->AppendDouble(bounds.left());
++  state->AppendDouble(bounds.top());
++  state->AppendDouble(bounds.right());
++  state->AppendDouble(bounds.bottom());
++  state->EndArray();
++
++  // Serialize runs with glyph IDs and positions using SkTextBlobRunIterator
++  // which gives us access to the positioning type (horizontal, full, rsxform)
++  state->BeginArray("runs");
++  for (SkTextBlobRunIterator iter(blob); !iter.done(); iter.next()) {
++    state->BeginDictionary();
++    const uint32_t count = iter.glyphCount();
++    state->SetInteger("glyphCount", count);
++
++    // Serialize glyph IDs
++    state->BeginArray("glyphs");
++    const SkGlyphID* glyphs = iter.glyphs();
++    for (uint32_t i = 0; i < count; ++i) {
++      state->AppendInteger(UNSAFE_BUFFERS(glyphs[i]));
++    }
++    state->EndArray();
++
++    // Serialize positioning type and data
++    auto positioning = iter.positioning();
++    state->SetInteger("positioning", static_cast<int>(positioning));
++
++    if (positioning == SkTextBlobRunIterator::kRSXform_Positioning) {
++      // RSXform: [scos, ssin, tx, ty] per glyph - complete transform info
++      state->BeginArray("rsxforms");
++      const SkRSXform* xforms = iter.xforms();
++      for (uint32_t i = 0; i < count; ++i) {
++        state->BeginDictionary();
++        state->SetDouble("scos", UNSAFE_BUFFERS(xforms[i].fSCos));
++        state->SetDouble("ssin", UNSAFE_BUFFERS(xforms[i].fSSin));
++        state->SetDouble("tx", UNSAFE_BUFFERS(xforms[i].fTx));
++        state->SetDouble("ty", UNSAFE_BUFFERS(xforms[i].fTy));
++        state->EndDictionary();
++      }
++      state->EndArray();
++    } else if (positioning == SkTextBlobRunIterator::kFull_Positioning) {
++      // Full positioning: x,y pairs
++      state->BeginArray("positions");
++      const SkPoint* points = iter.points();
++      for (uint32_t i = 0; i < count; ++i) {
++        state->BeginDictionary();
++        state->SetDouble("x", UNSAFE_BUFFERS(points[i].x()));
++        state->SetDouble("y", UNSAFE_BUFFERS(points[i].y()));
++        state->EndDictionary();
++      }
++      state->EndArray();
++    } else if (positioning == SkTextBlobRunIterator::kHorizontal_Positioning) {
++      // Horizontal: x positions only
++      state->BeginArray("positions");
++      const SkScalar* pos = iter.pos();
++      for (uint32_t i = 0; i < count; ++i) {
++        state->AppendDouble(UNSAFE_BUFFERS(pos[i]));
++      }
++      state->EndArray();
++    }
++    // kDefault_Positioning has no position data (uses font advances)
++
++    // Serialize run offset
++    const SkPoint& offset = iter.offset();
++    state->SetDouble("offsetX", offset.x());
++    state->SetDouble("offsetY", offset.y());
++
++    // Serialize font info
++    const SkFont& font = iter.font();
++    state->SetDouble("fontSize", font.getSize());
++    if (font.getTypeface()) {
++      SkString family_name;
++      font.getTypeface()->getFamilyName(&family_name);
++      state->SetString("fontFamily",
++                       std::string(family_name.c_str(), family_name.size()));
++      state->SetInteger("fontWeight",
++                        font.getTypeface()->fontStyle().weight());
++    }
++
++    state->EndDictionary();
++  }
++  state->EndArray();
++}
++
++void SerializePaintOpRecursive(const PaintOp& op,
++                               base::trace_event::TracedValue* state) {
++  state->SetString("type", PaintOpTypeToString(op.GetType()));
++
++  switch (op.GetType()) {
++    case PaintOpType::kClipRect: {
++      const auto& clip_op = static_cast<const ClipRectOp&>(op);
++      state->BeginArray("rect");
++      state->AppendDouble(clip_op.rect.left());
++      state->AppendDouble(clip_op.rect.top());
++      state->AppendDouble(clip_op.rect.right());
++      state->AppendDouble(clip_op.rect.bottom());
++      state->EndArray();
++      state->SetBoolean("antiAlias", clip_op.antialias);
++      break;
++    }
++    case PaintOpType::kClipRRect: {
++      const auto& clip_op = static_cast<const ClipRRectOp&>(op);
++      state->BeginArray("rect");
++      state->AppendDouble(clip_op.rrect.rect().left());
++      state->AppendDouble(clip_op.rrect.rect().top());
++      state->AppendDouble(clip_op.rrect.rect().right());
++      state->AppendDouble(clip_op.rrect.rect().bottom());
++      state->EndArray();
++      state->BeginArray("radii");
++      state->AppendDouble(clip_op.rrect.radii(SkRRect::kUpperLeft_Corner).x());
++      state->AppendDouble(clip_op.rrect.radii(SkRRect::kUpperLeft_Corner).y());
++      state->AppendDouble(clip_op.rrect.radii(SkRRect::kUpperRight_Corner).x());
++      state->AppendDouble(clip_op.rrect.radii(SkRRect::kUpperRight_Corner).y());
++      state->AppendDouble(clip_op.rrect.radii(SkRRect::kLowerRight_Corner).x());
++      state->AppendDouble(clip_op.rrect.radii(SkRRect::kLowerRight_Corner).y());
++      state->AppendDouble(clip_op.rrect.radii(SkRRect::kLowerLeft_Corner).x());
++      state->AppendDouble(clip_op.rrect.radii(SkRRect::kLowerLeft_Corner).y());
++      state->EndArray();
++      state->SetBoolean("antiAlias", clip_op.antialias);
++      break;
++    }
++    case PaintOpType::kClipPath: {
++      const auto& clip_op = static_cast<const ClipPathOp&>(op);
++      state->SetBoolean("antiAlias", clip_op.antialias);
++      // Serialize path as SVG path string
++      SkString path_str = SkParsePath::ToSVGString(clip_op.path);
++      state->SetString("path", std::string(path_str.c_str(), path_str.size()));
++      // Also serialize path bounds
++      const SkRect& bounds = clip_op.path.getBounds();
++      state->BeginArray("bounds");
++      state->AppendDouble(bounds.left());
++      state->AppendDouble(bounds.top());
++      state->AppendDouble(bounds.right());
++      state->AppendDouble(bounds.bottom());
++      state->EndArray();
++      break;
++    }
++    case PaintOpType::kDrawRect: {
++      const auto& draw_op = static_cast<const DrawRectOp&>(op);
++      state->BeginArray("rect");
++      state->AppendDouble(draw_op.rect.left());
++      state->AppendDouble(draw_op.rect.top());
++      state->AppendDouble(draw_op.rect.right());
++      state->AppendDouble(draw_op.rect.bottom());
++      state->EndArray();
++      state->BeginDictionary("flags");
++      const SkColor4f& color = draw_op.flags.getColor4f();
++      state->SetDouble("r", color.fR);
++      state->SetDouble("g", color.fG);
++      state->SetDouble("b", color.fB);
++      state->SetDouble("a", color.fA);
++      // Check for shader (gradient)
++      if (draw_op.flags.HasShader()) {
++        const PaintShader* shader = draw_op.flags.getShader();
++        if (shader) {
++          PaintShader::Type type = shader->shader_type();
++          if (type == PaintShader::Type::kLinearGradient) {
++            state->SetString("shaderType", "kLinearGradient");
++            // Serialize linear gradient start/end points
++            state->BeginArray("startPoint");
++            state->AppendDouble(shader->start_point().x());
++            state->AppendDouble(shader->start_point().y());
++            state->EndArray();
++            state->BeginArray("endPoint");
++            state->AppendDouble(shader->end_point().x());
++            state->AppendDouble(shader->end_point().y());
++            state->EndArray();
++          } else if (type == PaintShader::Type::kRadialGradient) {
++            state->SetString("shaderType", "kRadialGradient");
++            state->BeginArray("center");
++            state->AppendDouble(shader->center().x());
++            state->AppendDouble(shader->center().y());
++            state->EndArray();
++            state->SetDouble("radius", shader->end_radius());
++          } else if (type == PaintShader::Type::kTwoPointConicalGradient) {
++            state->SetString("shaderType", "kTwoPointConicalGradient");
++          } else if (type == PaintShader::Type::kSweepGradient) {
++            state->SetString("shaderType", "kSweepGradient");
++          } else {
++            state->SetString("shaderType", "other");
++          }
++          // Serialize gradient colors and positions
++          const auto& colors = shader->colors();
++          const auto& positions = shader->positions();
++          if (!colors.empty()) {
++            state->BeginArray("gradientColors");
++            for (const auto& c : colors) {
++              state->BeginDictionary();
++              state->SetDouble("r", c.fR);
++              state->SetDouble("g", c.fG);
++              state->SetDouble("b", c.fB);
++              state->SetDouble("a", c.fA);
++              state->EndDictionary();
++            }
++            state->EndArray();
++            state->BeginArray("gradientPositions");
++            for (const auto& pos : positions) {
++              state->AppendDouble(pos);
++            }
++            state->EndArray();
++          }
++          state->SetBoolean("hasShader", true);
++        }
++      }
++      state->EndDictionary();
++      break;
++    }
++    case PaintOpType::kDrawRRect: {
++      const auto& draw_op = static_cast<const DrawRRectOp&>(op);
++      state->BeginArray("rect");
++      state->AppendDouble(draw_op.rrect.rect().left());
++      state->AppendDouble(draw_op.rrect.rect().top());
++      state->AppendDouble(draw_op.rrect.rect().right());
++      state->AppendDouble(draw_op.rrect.rect().bottom());
++      state->EndArray();
++      // Serialize corner radii [tlX, tlY, trX, trY, brX, brY, blX, blY]
++      state->BeginArray("radii");
++      state->AppendDouble(draw_op.rrect.radii(SkRRect::kUpperLeft_Corner).x());
++      state->AppendDouble(draw_op.rrect.radii(SkRRect::kUpperLeft_Corner).y());
++      state->AppendDouble(draw_op.rrect.radii(SkRRect::kUpperRight_Corner).x());
++      state->AppendDouble(draw_op.rrect.radii(SkRRect::kUpperRight_Corner).y());
++      state->AppendDouble(draw_op.rrect.radii(SkRRect::kLowerRight_Corner).x());
++      state->AppendDouble(draw_op.rrect.radii(SkRRect::kLowerRight_Corner).y());
++      state->AppendDouble(draw_op.rrect.radii(SkRRect::kLowerLeft_Corner).x());
++      state->AppendDouble(draw_op.rrect.radii(SkRRect::kLowerLeft_Corner).y());
++      state->EndArray();
++      // Serialize paint flags (color, style, stroke width)
++      state->BeginDictionary("flags");
++      const SkColor4f& color = draw_op.flags.getColor4f();
++      state->SetDouble("r", color.fR);
++      state->SetDouble("g", color.fG);
++      state->SetDouble("b", color.fB);
++      state->SetDouble("a", color.fA);
++      // Style: 0 = Fill, 1 = Stroke, 2 = StrokeAndFill
++      state->SetInteger("style", static_cast<int>(draw_op.flags.getStyle()));
++      state->SetDouble("strokeWidth", draw_op.flags.getStrokeWidth());
++      // Check for shader (gradient)
++      if (draw_op.flags.HasShader()) {
++        const PaintShader* shader = draw_op.flags.getShader();
++        if (shader) {
++          PaintShader::Type type = shader->shader_type();
++          if (type == PaintShader::Type::kLinearGradient) {
++            state->SetString("shaderType", "kLinearGradient");
++            // Serialize linear gradient start/end points
++            state->BeginArray("startPoint");
++            state->AppendDouble(shader->start_point().x());
++            state->AppendDouble(shader->start_point().y());
++            state->EndArray();
++            state->BeginArray("endPoint");
++            state->AppendDouble(shader->end_point().x());
++            state->AppendDouble(shader->end_point().y());
++            state->EndArray();
++          } else if (type == PaintShader::Type::kRadialGradient) {
++            state->SetString("shaderType", "kRadialGradient");
++            state->BeginArray("center");
++            state->AppendDouble(shader->center().x());
++            state->AppendDouble(shader->center().y());
++            state->EndArray();
++            state->SetDouble("radius", shader->end_radius());
++          } else if (type == PaintShader::Type::kTwoPointConicalGradient) {
++            state->SetString("shaderType", "kTwoPointConicalGradient");
++          } else if (type == PaintShader::Type::kSweepGradient) {
++            state->SetString("shaderType", "kSweepGradient");
++          } else {
++            state->SetString("shaderType", "other");
++          }
++          // Serialize gradient colors and positions
++          const auto& colors = shader->colors();
++          const auto& positions = shader->positions();
++          if (!colors.empty()) {
++            state->BeginArray("gradientColors");
++            for (const auto& c : colors) {
++              state->BeginDictionary();
++              state->SetDouble("r", c.fR);
++              state->SetDouble("g", c.fG);
++              state->SetDouble("b", c.fB);
++              state->SetDouble("a", c.fA);
++              state->EndDictionary();
++            }
++            state->EndArray();
++            state->BeginArray("gradientPositions");
++            for (const auto& pos : positions) {
++              state->AppendDouble(pos);
++            }
++            state->EndArray();
++          }
++          state->SetBoolean("hasShader", true);
++        }
++      }
++      state->EndDictionary();
++      break;
++    }
++    case PaintOpType::kDrawColor: {
++      const auto& draw_op = static_cast<const DrawColorOp&>(op);
++      state->SetDouble("r", draw_op.color.fR);
++      state->SetDouble("g", draw_op.color.fG);
++      state->SetDouble("b", draw_op.color.fB);
++      state->SetDouble("a", draw_op.color.fA);
++      break;
++    }
++    case PaintOpType::kDrawLine: {
++      const auto& draw_op = static_cast<const DrawLineOp&>(op);
++      state->SetDouble("x0", draw_op.x0);
++      state->SetDouble("y0", draw_op.y0);
++      state->SetDouble("x1", draw_op.x1);
++      state->SetDouble("y1", draw_op.y1);
++      break;
++    }
++    case PaintOpType::kDrawOval: {
++      const auto& draw_op = static_cast<const DrawOvalOp&>(op);
++      state->BeginArray("oval");
++      state->AppendDouble(draw_op.oval.left());
++      state->AppendDouble(draw_op.oval.top());
++      state->AppendDouble(draw_op.oval.right());
++      state->AppendDouble(draw_op.oval.bottom());
++      state->EndArray();
++      break;
++    }
++    case PaintOpType::kDrawPath: {
++      const auto& draw_op = static_cast<const DrawPathOp&>(op);
++      // Serialize path as SVG path string
++      SkString path_str = SkParsePath::ToSVGString(draw_op.path);
++      state->SetString("path", std::string(path_str.c_str(), path_str.size()));
++      // Serialize path fill type
++      state->SetInteger("fillType", static_cast<int>(draw_op.sk_path_fill_type));
++      // Serialize path bounds
++      const SkRect& bounds = draw_op.path.getBounds();
++      state->BeginArray("bounds");
++      state->AppendDouble(bounds.left());
++      state->AppendDouble(bounds.top());
++      state->AppendDouble(bounds.right());
++      state->AppendDouble(bounds.bottom());
++      state->EndArray();
++      // Serialize paint flags
++      state->BeginDictionary("flags");
++      const SkColor4f& color = draw_op.flags.getColor4f();
++      state->SetDouble("r", color.fR);
++      state->SetDouble("g", color.fG);
++      state->SetDouble("b", color.fB);
++      state->SetDouble("a", color.fA);
++      // Style: 0 = Fill, 1 = Stroke, 2 = StrokeAndFill
++      state->SetInteger("style", static_cast<int>(draw_op.flags.getStyle()));
++      state->SetDouble("strokeWidth", draw_op.flags.getStrokeWidth());
++      state->EndDictionary();
++      break;
++    }
++    case PaintOpType::kDrawTextBlob: {
++      const auto& draw_op = static_cast<const DrawTextBlobOp&>(op);
++      state->SetDouble("x", draw_op.x);
++      state->SetDouble("y", draw_op.y);
++      state->SetInteger("nodeId", draw_op.node_id);
++      // Serialize paint flags (color)
++      state->BeginDictionary("flags");
++      const SkColor4f& color = draw_op.flags.getColor4f();
++      state->SetDouble("r", color.fR);
++      state->SetDouble("g", color.fG);
++      state->SetDouble("b", color.fB);
++      state->SetDouble("a", color.fA);
++      state->EndDictionary();
++      // Serialize glyph data from the text blob
++      if (draw_op.blob) {
++        SerializeTextBlob(draw_op.blob.get(), state);
++      }
++      break;
++    }
++    case PaintOpType::kDrawRecord: {
++      const auto& draw_op = static_cast<const DrawRecordOp&>(op);
++      // Recursively serialize the nested record
++      state->BeginArray("record");
++      for (const PaintOp& nested_op : draw_op.record.buffer()) {
++        state->BeginDictionary();
++        SerializePaintOpRecursive(nested_op, state);
++        state->EndDictionary();
++      }
++      state->EndArray();
++      break;
++    }
++    case PaintOpType::kTranslate: {
++      const auto& translate_op = static_cast<const TranslateOp&>(op);
++      state->SetDouble("dx", translate_op.dx);
++      state->SetDouble("dy", translate_op.dy);
++      break;
++    }
++    case PaintOpType::kScale: {
++      const auto& scale_op = static_cast<const ScaleOp&>(op);
++      state->SetDouble("sx", scale_op.sx);
++      state->SetDouble("sy", scale_op.sy);
++      break;
++    }
++    case PaintOpType::kRotate: {
++      const auto& rotate_op = static_cast<const RotateOp&>(op);
++      state->SetDouble("degrees", rotate_op.degrees);
++      break;
++    }
++    case PaintOpType::kConcat: {
++      const auto& concat_op = static_cast<const ConcatOp&>(op);
++      state->BeginArray("matrix");
++      for (int row = 0; row < 4; ++row) {
++        for (int col = 0; col < 4; ++col) {
++          state->AppendDouble(concat_op.matrix.rc(row, col));
++        }
++      }
++      state->EndArray();
++      break;
++    }
++    case PaintOpType::kSetMatrix: {
++      const auto& matrix_op = static_cast<const SetMatrixOp&>(op);
++      state->BeginArray("matrix");
++      for (int row = 0; row < 4; ++row) {
++        for (int col = 0; col < 4; ++col) {
++          state->AppendDouble(matrix_op.matrix.rc(row, col));
++        }
++      }
++      state->EndArray();
++      break;
++    }
++    case PaintOpType::kSave:
++    case PaintOpType::kRestore:
++    case PaintOpType::kNoop:
++      // No additional data
++      break;
++    case PaintOpType::kSaveLayerAlpha: {
++      const auto& save_op = static_cast<const SaveLayerAlphaOp&>(op);
++      state->BeginArray("bounds");
++      state->AppendDouble(save_op.bounds.left());
++      state->AppendDouble(save_op.bounds.top());
++      state->AppendDouble(save_op.bounds.right());
++      state->AppendDouble(save_op.bounds.bottom());
++      state->EndArray();
++      state->SetDouble("alpha", save_op.alpha);
++      break;
++    }
++    case PaintOpType::kSaveLayer: {
++      const auto& save_op = static_cast<const SaveLayerOp&>(op);
++      // Serialize bounds
++      state->BeginArray("bounds");
++      state->AppendDouble(save_op.bounds.left());
++      state->AppendDouble(save_op.bounds.top());
++      state->AppendDouble(save_op.bounds.right());
++      state->AppendDouble(save_op.bounds.bottom());
++      state->EndArray();
++      // Serialize flags including image filter (for shadows/blur)
++      state->BeginDictionary("flags");
++      const SkColor4f& color = save_op.flags.getColor4f();
++      state->SetDouble("r", color.fR);
++      state->SetDouble("g", color.fG);
++      state->SetDouble("b", color.fB);
++      state->SetDouble("a", color.fA);
++      // Check for image filter (used for blur, drop shadow, etc.)
++      const auto& image_filter = save_op.flags.getImageFilter();
++      if (image_filter) {
++        state->BeginDictionary("imageFilter");
++        PaintFilter::Type filter_type = image_filter->type();
++        state->SetInteger("filterType", static_cast<int>(filter_type));
++        if (filter_type == PaintFilter::Type::kBlur) {
++          const auto* blur = static_cast<const BlurPaintFilter*>(image_filter.get());
++          state->SetString("filterName", "blur");
++          state->SetDouble("sigmaX", blur->sigma_x());
++          state->SetDouble("sigmaY", blur->sigma_y());
++        } else if (filter_type == PaintFilter::Type::kDropShadow) {
++          const auto* shadow = static_cast<const DropShadowPaintFilter*>(image_filter.get());
++          state->SetString("filterName", "dropShadow");
++          state->SetDouble("dx", shadow->dx());
++          state->SetDouble("dy", shadow->dy());
++          state->SetDouble("sigmaX", shadow->sigma_x());
++          state->SetDouble("sigmaY", shadow->sigma_y());
++          const SkColor4f& shadow_color = shadow->color();
++          state->BeginDictionary("shadowColor");
++          state->SetDouble("r", shadow_color.fR);
++          state->SetDouble("g", shadow_color.fG);
++          state->SetDouble("b", shadow_color.fB);
++          state->SetDouble("a", shadow_color.fA);
++          state->EndDictionary();
++          state->SetInteger("shadowMode", static_cast<int>(shadow->shadow_mode()));
++        } else {
++          state->SetString("filterName", "other");
++        }
++        state->EndDictionary();
++      }
++      state->EndDictionary();
++      break;
++    }
++    case PaintOpType::kDrawImageRect: {
++      const auto& draw_op = static_cast<const DrawImageRectOp&>(op);
++      state->BeginArray("src");
++      state->AppendDouble(draw_op.src.left());
++      state->AppendDouble(draw_op.src.top());
++      state->AppendDouble(draw_op.src.right());
++      state->AppendDouble(draw_op.src.bottom());
++      state->EndArray();
++      state->BeginArray("dst");
++      state->AppendDouble(draw_op.dst.left());
++      state->AppendDouble(draw_op.dst.top());
++      state->AppendDouble(draw_op.dst.right());
++      state->AppendDouble(draw_op.dst.bottom());
++      state->EndArray();
++      if (draw_op.image) {
++        state->SetInteger("imageWidth", draw_op.image.width());
++        state->SetInteger("imageHeight", draw_op.image.height());
++      }
++      break;
++    }
++    default:
++      // For other ops, just output type (already done above)
++      break;
++  }
++}
++
++}  // namespace
++
++void RasterSource::AsValueIntoWithPaintOps(
++    base::trace_event::TracedValue* state) const {
++  if (!display_list_.get()) {
++    return;
++  }
++
++  state->BeginDictionary();
++  viz::TracedValue::SetIDRef(viz::TracedValue::Id(display_list_.get()), state,
++                             "id");
++
++  // Include bounds
++  state->BeginArray("recorded_bounds");
++  state->AppendInteger(recorded_bounds_.x());
++  state->AppendInteger(recorded_bounds_.y());
++  state->AppendInteger(recorded_bounds_.width());
++  state->AppendInteger(recorded_bounds_.height());
++  state->EndArray();
++
++  // Serialize paint ops using the recursive helper
++  const PaintOpBuffer& buffer = display_list_->paint_op_buffer();
++  state->SetInteger("op_count", static_cast<int>(buffer.size()));
++  state->SetInteger("total_op_count", static_cast<int>(buffer.total_op_count()));
++
++  state->BeginArray("paint_ops");
++  for (const PaintOp& op : buffer) {
++    state->BeginDictionary();
++    SerializePaintOpRecursive(op, state);
++    state->EndDictionary();
++  }
++  state->EndArray();
++
++  state->EndDictionary();
++}
++
+ void RasterSource::DidBeginTracing() {
+   if (display_list_.get())
+     display_list_->EmitTraceSnapshot();
+diff --git a/cc/raster/raster_source.h b/cc/raster/raster_source.h
+index c932d003d0..4a6a505d72 100644
+--- a/cc/raster/raster_source.h
++++ b/cc/raster/raster_source.h
+@@ -125,6 +125,8 @@ class CC_EXPORT RasterSource : public base::RefCountedThreadSafe<RasterSource> {
+   // Tracing functionality.
+   void DidBeginTracing();
+   void AsValueInto(base::trace_event::TracedValue* array) const;
++  // Serialize with full paint op details for debugging.
++  void AsValueIntoWithPaintOps(base::trace_event::TracedValue* state) const;
+ 
+   const scoped_refptr<const DisplayItemList>& GetDisplayItemList() const {
+     return display_list_;
+diff --git a/cc/paint/paint_op_json_serializer.cc b/cc/paint/paint_op_json_serializer.cc
+new file mode 100644
+index 0000000000..c707dd7a8c
+--- /dev/null
++++ b/cc/paint/paint_op_json_serializer.cc
+@@ -0,0 +1,550 @@
++// Copyright 2024 The Chromium Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "cc/paint/paint_op_json_serializer.h"
++
++#include <sstream>
++
++#include "base/trace_event/traced_value.h"
++#include "base/trace_event/traced_value_support.h"
++#include "cc/paint/display_item_list.h"
++#include "cc/paint/paint_flags.h"
++#include "cc/paint/paint_op.h"
++#include "cc/paint/paint_op_buffer.h"
++#include "third_party/skia/include/core/SkBlendMode.h"
++#include "third_party/skia/include/core/SkM44.h"
++#include "third_party/skia/include/core/SkPath.h"
++#include "third_party/skia/include/core/SkRRect.h"
++#include "third_party/skia/include/core/SkRect.h"
++#include "third_party/skia/include/core/SkTextBlob.h"
++#include "third_party/skia/include/utils/SkParsePath.h"
++
++namespace cc {
++
++namespace {
++
++const char* BlendModeToString(SkBlendMode mode) {
++  switch (mode) {
++    case SkBlendMode::kClear: return "clear";
++    case SkBlendMode::kSrc: return "src";
++    case SkBlendMode::kDst: return "dst";
++    case SkBlendMode::kSrcOver: return "src-over";
++    case SkBlendMode::kDstOver: return "dst-over";
++    case SkBlendMode::kSrcIn: return "src-in";
++    case SkBlendMode::kDstIn: return "dst-in";
++    case SkBlendMode::kSrcOut: return "src-out";
++    case SkBlendMode::kDstOut: return "dst-out";
++    case SkBlendMode::kSrcATop: return "src-atop";
++    case SkBlendMode::kDstATop: return "dst-atop";
++    case SkBlendMode::kXor: return "xor";
++    case SkBlendMode::kPlus: return "plus";
++    case SkBlendMode::kModulate: return "modulate";
++    case SkBlendMode::kScreen: return "screen";
++    case SkBlendMode::kOverlay: return "overlay";
++    case SkBlendMode::kDarken: return "darken";
++    case SkBlendMode::kLighten: return "lighten";
++    case SkBlendMode::kColorDodge: return "color-dodge";
++    case SkBlendMode::kColorBurn: return "color-burn";
++    case SkBlendMode::kHardLight: return "hard-light";
++    case SkBlendMode::kSoftLight: return "soft-light";
++    case SkBlendMode::kDifference: return "difference";
++    case SkBlendMode::kExclusion: return "exclusion";
++    case SkBlendMode::kMultiply: return "multiply";
++    case SkBlendMode::kHue: return "hue";
++    case SkBlendMode::kSaturation: return "saturation";
++    case SkBlendMode::kColor: return "color";
++    case SkBlendMode::kLuminosity: return "luminosity";
++  }
++  return "unknown";
++}
++
++const char* StyleToString(PaintFlags::Style style) {
++  switch (style) {
++    case PaintFlags::kFill_Style: return "fill";
++    case PaintFlags::kStroke_Style: return "stroke";
++  }
++  return "unknown";
++}
++
++const char* ClipOpToString(SkClipOp op) {
++  switch (op) {
++    case SkClipOp::kDifference: return "difference";
++    case SkClipOp::kIntersect: return "intersect";
++  }
++  return "unknown";
++}
++
++const char* PathFillTypeToString(SkPathFillType type) {
++  switch (type) {
++    case SkPathFillType::kWinding: return "winding";
++    case SkPathFillType::kEvenOdd: return "evenodd";
++    case SkPathFillType::kInverseWinding: return "inverse-winding";
++    case SkPathFillType::kInverseEvenOdd: return "inverse-evenodd";
++  }
++  return "unknown";
++}
++
++}  // namespace
++
++// static
++void PaintOpJsonSerializer::SerializeSkRect(
++    const char* name,
++    const SkRect& rect,
++    base::trace_event::TracedValue* value) {
++  value->BeginArray(name);
++  value->AppendDouble(rect.left());
++  value->AppendDouble(rect.top());
++  value->AppendDouble(rect.right());
++  value->AppendDouble(rect.bottom());
++  value->EndArray();
++}
++
++// static
++void PaintOpJsonSerializer::SerializeSkRRect(
++    const char* name,
++    const SkRRect& rrect,
++    base::trace_event::TracedValue* value) {
++  value->BeginDictionary(name);
++  SerializeSkRect("rect", rrect.rect(), value);
++  // Serialize corner radii [tlX, tlY, trX, trY, brX, brY, blX, blY]
++  value->BeginArray("radii");
++  value->AppendDouble(rrect.radii(SkRRect::kUpperLeft_Corner).x());
++  value->AppendDouble(rrect.radii(SkRRect::kUpperLeft_Corner).y());
++  value->AppendDouble(rrect.radii(SkRRect::kUpperRight_Corner).x());
++  value->AppendDouble(rrect.radii(SkRRect::kUpperRight_Corner).y());
++  value->AppendDouble(rrect.radii(SkRRect::kLowerRight_Corner).x());
++  value->AppendDouble(rrect.radii(SkRRect::kLowerRight_Corner).y());
++  value->AppendDouble(rrect.radii(SkRRect::kLowerLeft_Corner).x());
++  value->AppendDouble(rrect.radii(SkRRect::kLowerLeft_Corner).y());
++  value->EndArray();
++  value->EndDictionary();
++}
++
++// static
++void PaintOpJsonSerializer::SerializeSkM44(
++    const char* name,
++    const SkM44& matrix,
++    base::trace_event::TracedValue* value) {
++  // Serialize as a flat 16-element array in row-major order
++  value->BeginArray(name);
++  for (int row = 0; row < 4; ++row) {
++    for (int col = 0; col < 4; ++col) {
++      value->AppendDouble(matrix.rc(row, col));
++    }
++  }
++  value->EndArray();
++}
++
++// static
++void PaintOpJsonSerializer::SerializeSkColor4f(
++    const char* name,
++    const SkColor4f& color,
++    base::trace_event::TracedValue* value) {
++  value->BeginDictionary(name);
++  value->SetDouble("r", color.fR);
++  value->SetDouble("g", color.fG);
++  value->SetDouble("b", color.fB);
++  value->SetDouble("a", color.fA);
++  value->EndDictionary();
++}
++
++// static
++void PaintOpJsonSerializer::SerializeSkBlendMode(
++    const char* name,
++    SkBlendMode mode,
++    base::trace_event::TracedValue* value) {
++  value->SetString(name, BlendModeToString(mode));
++}
++
++// static
++void PaintOpJsonSerializer::SerializeSkPath(
++    const char* name,
++    const SkPath& path,
++    base::trace_event::TracedValue* value) {
++  // Serialize path as SVG path data string
++  SkString svg_path;
++  SkParsePath::ToSVGString(path, &svg_path);
++  value->SetString(name, std::string(svg_path.c_str(), svg_path.size()));
++
++  // Also include fill type
++  value->SetString("fillType", PathFillTypeToString(path.getFillType()));
++}
++
++// static
++void PaintOpJsonSerializer::SerializeCorePaintFlags(
++    const CorePaintFlags& flags,
++    base::trace_event::TracedValue* value) {
++  value->BeginDictionary("flags");
++  SerializeSkColor4f("color", flags.getColor4f(), value);
++  value->SetString("style", StyleToString(flags.getStyle()));
++  SerializeSkBlendMode("blendMode", flags.getBlendMode(), value);
++  value->SetBoolean("antiAlias", flags.isAntiAlias());
++  value->EndDictionary();
++}
++
++// static
++void PaintOpJsonSerializer::SerializePaintFlags(
++    const PaintFlags& flags,
++    base::trace_event::TracedValue* value) {
++  value->BeginDictionary("flags");
++  SerializeSkColor4f("color", flags.getColor4f(), value);
++  value->SetString("style", StyleToString(flags.getStyle()));
++  SerializeSkBlendMode("blendMode", flags.getBlendMode(), value);
++  value->SetBoolean("antiAlias", flags.isAntiAlias());
++  value->SetDouble("strokeWidth", flags.getStrokeWidth());
++  value->SetDouble("strokeMiter", flags.getStrokeMiter());
++
++  // Cap and Join
++  const char* cap_names[] = {"butt", "round", "square"};
++  const char* join_names[] = {"miter", "round", "bevel"};
++  value->SetString("strokeCap", cap_names[static_cast<int>(flags.getStrokeCap())]);
++  value->SetString("strokeJoin", join_names[static_cast<int>(flags.getStrokeJoin())]);
++
++  // Note: Shaders, filters, and other complex objects are not serialized
++  // as they would require extensive handling. Add HasShader() etc. for debugging.
++  value->SetBoolean("hasShader", !!flags.getShader());
++  value->SetBoolean("hasColorFilter", !!flags.getColorFilter());
++  value->SetBoolean("hasImageFilter", !!flags.getImageFilter());
++  value->SetBoolean("hasPathEffect", !!flags.getPathEffect());
++
++  value->EndDictionary();
++}
++
++// static
++void PaintOpJsonSerializer::SerializePaintOp(
++    const PaintOp& op,
++    base::trace_event::TracedValue* value) {
++  value->SetString("type", PaintOpTypeToString(op.GetType()));
++
++  switch (op.GetType()) {
++    case PaintOpType::kClipRect: {
++      const auto& clip_op = static_cast<const ClipRectOp&>(op);
++      SerializeSkRect("rect", clip_op.rect, value);
++      value->SetString("op", ClipOpToString(clip_op.op));
++      value->SetBoolean("antiAlias", clip_op.antialias);
++      break;
++    }
++    case PaintOpType::kClipRRect: {
++      const auto& clip_op = static_cast<const ClipRRectOp&>(op);
++      SerializeSkRRect("rrect", clip_op.rrect, value);
++      value->SetString("op", ClipOpToString(clip_op.op));
++      value->SetBoolean("antiAlias", clip_op.antialias);
++      break;
++    }
++    case PaintOpType::kClipPath: {
++      const auto& clip_op = static_cast<const ClipPathOp&>(op);
++      SerializeSkPath("path", clip_op.path, value);
++      value->SetString("op", ClipOpToString(clip_op.op));
++      value->SetBoolean("antiAlias", clip_op.antialias);
++      break;
++    }
++    case PaintOpType::kConcat: {
++      const auto& concat_op = static_cast<const ConcatOp&>(op);
++      SerializeSkM44("matrix", concat_op.matrix, value);
++      break;
++    }
++    case PaintOpType::kDrawColor: {
++      const auto& draw_op = static_cast<const DrawColorOp&>(op);
++      SerializeSkColor4f("color", draw_op.color, value);
++      SerializeSkBlendMode("mode", draw_op.mode, value);
++      break;
++    }
++    case PaintOpType::kDrawLine: {
++      const auto& draw_op = static_cast<const DrawLineOp&>(op);
++      value->SetDouble("x0", draw_op.x0);
++      value->SetDouble("y0", draw_op.y0);
++      value->SetDouble("x1", draw_op.x1);
++      value->SetDouble("y1", draw_op.y1);
++      SerializePaintFlags(draw_op.flags, value);
++      break;
++    }
++    case PaintOpType::kDrawLineLite: {
++      const auto& draw_op = static_cast<const DrawLineLiteOp&>(op);
++      value->SetDouble("x0", draw_op.x0);
++      value->SetDouble("y0", draw_op.y0);
++      value->SetDouble("x1", draw_op.x1);
++      value->SetDouble("y1", draw_op.y1);
++      SerializeCorePaintFlags(draw_op.core_paint_flags, value);
++      break;
++    }
++    case PaintOpType::kDrawRect: {
++      const auto& draw_op = static_cast<const DrawRectOp&>(op);
++      SerializeSkRect("rect", draw_op.rect, value);
++      SerializePaintFlags(draw_op.flags, value);
++      break;
++    }
++    case PaintOpType::kDrawIRect: {
++      const auto& draw_op = static_cast<const DrawIRectOp&>(op);
++      value->BeginArray("rect");
++      value->AppendInteger(draw_op.rect.left());
++      value->AppendInteger(draw_op.rect.top());
++      value->AppendInteger(draw_op.rect.right());
++      value->AppendInteger(draw_op.rect.bottom());
++      value->EndArray();
++      SerializePaintFlags(draw_op.flags, value);
++      break;
++    }
++    case PaintOpType::kDrawRRect: {
++      const auto& draw_op = static_cast<const DrawRRectOp&>(op);
++      SerializeSkRRect("rrect", draw_op.rrect, value);
++      SerializePaintFlags(draw_op.flags, value);
++      break;
++    }
++    case PaintOpType::kDrawDRRect: {
++      const auto& draw_op = static_cast<const DrawDRRectOp&>(op);
++      SerializeSkRRect("outer", draw_op.outer, value);
++      SerializeSkRRect("inner", draw_op.inner, value);
++      SerializePaintFlags(draw_op.flags, value);
++      break;
++    }
++    case PaintOpType::kDrawOval: {
++      const auto& draw_op = static_cast<const DrawOvalOp&>(op);
++      SerializeSkRect("oval", draw_op.oval, value);
++      SerializePaintFlags(draw_op.flags, value);
++      break;
++    }
++    case PaintOpType::kDrawArc: {
++      const auto& draw_op = static_cast<const DrawArcOp&>(op);
++      SerializeSkRect("oval", draw_op.oval, value);
++      value->SetDouble("startAngle", draw_op.start_angle_degrees);
++      value->SetDouble("sweepAngle", draw_op.sweep_angle_degrees);
++      SerializePaintFlags(draw_op.flags, value);
++      break;
++    }
++    case PaintOpType::kDrawArcLite: {
++      const auto& draw_op = static_cast<const DrawArcLiteOp&>(op);
++      SerializeSkRect("oval", draw_op.oval, value);
++      value->SetDouble("startAngle", draw_op.start_angle_degrees);
++      value->SetDouble("sweepAngle", draw_op.sweep_angle_degrees);
++      SerializeCorePaintFlags(draw_op.core_paint_flags, value);
++      break;
++    }
++    case PaintOpType::kDrawPath: {
++      const auto& draw_op = static_cast<const DrawPathOp&>(op);
++      SerializeSkPath("path", draw_op.path, value);
++      value->SetString("skPathFillType",
++                       PathFillTypeToString(draw_op.sk_path_fill_type));
++      SerializePaintFlags(draw_op.flags, value);
++      break;
++    }
++    case PaintOpType::kDrawImage: {
++      const auto& draw_op = static_cast<const DrawImageOp&>(op);
++      value->SetDouble("left", draw_op.left);
++      value->SetDouble("top", draw_op.top);
++      // Image dimensions if available
++      if (draw_op.image) {
++        value->SetInteger("imageWidth", draw_op.image.width());
++        value->SetInteger("imageHeight", draw_op.image.height());
++      }
++      SerializePaintFlags(draw_op.flags, value);
++      break;
++    }
++    case PaintOpType::kDrawImageRect: {
++      const auto& draw_op = static_cast<const DrawImageRectOp&>(op);
++      SerializeSkRect("src", draw_op.src, value);
++      SerializeSkRect("dst", draw_op.dst, value);
++      if (draw_op.image) {
++        value->SetInteger("imageWidth", draw_op.image.width());
++        value->SetInteger("imageHeight", draw_op.image.height());
++      }
++      SerializePaintFlags(draw_op.flags, value);
++      break;
++    }
++    case PaintOpType::kDrawTextBlob: {
++      const auto& draw_op = static_cast<const DrawTextBlobOp&>(op);
++      value->SetDouble("x", draw_op.x);
++      value->SetDouble("y", draw_op.y);
++      value->SetInteger("nodeId", draw_op.node_id);
++
++      // Serialize glyph IDs and positions from the text blob
++      if (draw_op.blob) {
++        SerializeSkRect("bounds", draw_op.blob->bounds(), value);
++
++        value->BeginArray("runs");
++        SkTextBlob::Iter iter(*draw_op.blob);
++        SkTextBlob::Iter::ExperimentalRun run;
++        while (iter.experimentalNext(&run)) {
++          value->BeginDictionary();
++          value->SetInteger("glyphCount", run.count);
++
++          // Serialize glyph IDs
++          value->BeginArray("glyphs");
++          for (int i = 0; i < run.count; ++i) {
++            value->AppendInteger(run.glyphs[i]);
++          }
++          value->EndArray();
++
++          // Serialize glyph positions (each position is an SkPoint with x, y)
++          value->BeginArray("positions");
++          for (int i = 0; i < run.count; ++i) {
++            value->AppendDouble(run.positions[i].x());
++            value->AppendDouble(run.positions[i].y());
++          }
++          value->EndArray();
++
++          // Serialize font info
++          value->SetDouble("fontSize", run.font.getSize());
++          if (run.font.getTypeface()) {
++            SkString family_name;
++            run.font.getTypeface()->getFamilyName(&family_name);
++            value->SetString("fontFamily",
++                             std::string(family_name.c_str(), family_name.size()));
++          }
++
++          value->EndDictionary();
++        }
++        value->EndArray();
++      }
++
++      SerializePaintFlags(draw_op.flags, value);
++      break;
++    }
++    case PaintOpType::kDrawRecord: {
++      const auto& draw_op = static_cast<const DrawRecordOp&>(op);
++      // Recursively serialize the nested record
++      value->BeginArray("record");
++      for (const PaintOp& nested_op : draw_op.record.buffer()) {
++        value->BeginDictionary();
++        SerializePaintOp(nested_op, value);
++        value->EndDictionary();
++      }
++      value->EndArray();
++      break;
++    }
++    case PaintOpType::kSave: {
++      // No additional data
++      break;
++    }
++    case PaintOpType::kSaveLayer: {
++      const auto& save_op = static_cast<const SaveLayerOp&>(op);
++      SerializeSkRect("bounds", save_op.bounds, value);
++      SerializePaintFlags(save_op.flags, value);
++      break;
++    }
++    case PaintOpType::kSaveLayerAlpha: {
++      const auto& save_op = static_cast<const SaveLayerAlphaOp&>(op);
++      SerializeSkRect("bounds", save_op.bounds, value);
++      value->SetDouble("alpha", save_op.alpha);
++      break;
++    }
++    case PaintOpType::kSaveLayerFilters: {
++      const auto& save_op = static_cast<const SaveLayerFiltersOp&>(op);
++      SerializeSkRect("bounds", save_op.bounds, value);
++      SerializePaintFlags(save_op.flags, value);
++      // Note: Filters are complex objects, just note their presence
++      value->SetBoolean("hasFilters", !save_op.filters.IsEmpty());
++      value->SetBoolean("hasBackdropFilter", !!save_op.backdrop_filter);
++      break;
++    }
++    case PaintOpType::kRestore: {
++      // No additional data
++      break;
++    }
++    case PaintOpType::kRotate: {
++      const auto& rotate_op = static_cast<const RotateOp&>(op);
++      value->SetDouble("degrees", rotate_op.degrees);
++      break;
++    }
++    case PaintOpType::kScale: {
++      const auto& scale_op = static_cast<const ScaleOp&>(op);
++      value->SetDouble("sx", scale_op.sx);
++      value->SetDouble("sy", scale_op.sy);
++      break;
++    }
++    case PaintOpType::kTranslate: {
++      const auto& translate_op = static_cast<const TranslateOp&>(op);
++      value->SetDouble("dx", translate_op.dx);
++      value->SetDouble("dy", translate_op.dy);
++      break;
++    }
++    case PaintOpType::kSetMatrix: {
++      const auto& matrix_op = static_cast<const SetMatrixOp&>(op);
++      SerializeSkM44("matrix", matrix_op.matrix, value);
++      break;
++    }
++    case PaintOpType::kSetNodeId: {
++      const auto& node_op = static_cast<const SetNodeIdOp&>(op);
++      value->SetInteger("nodeId", node_op.node_id);
++      break;
++    }
++    case PaintOpType::kNoop: {
++      // No additional data
++      break;
++    }
++    case PaintOpType::kAnnotate: {
++      const auto& annotate_op = static_cast<const AnnotateOp&>(op);
++      value->SetInteger("annotationType",
++                        static_cast<int>(annotate_op.annotation_type));
++      SerializeSkRect("rect", annotate_op.rect, value);
++      break;
++    }
++    case PaintOpType::kCustomData: {
++      const auto& custom_op = static_cast<const CustomDataOp&>(op);
++      value->SetInteger("id", custom_op.id);
++      break;
++    }
++    case PaintOpType::kDrawScrollingContents: {
++      // Complex type - just note its presence
++      value->SetString("note", "DrawScrollingContents (not fully serialized)");
++      break;
++    }
++    case PaintOpType::kDrawSkottie: {
++      // Animation - complex type
++      value->SetString("note", "DrawSkottie (not fully serialized)");
++      break;
++    }
++    case PaintOpType::kDrawSlug: {
++      // GPU-side text - complex type
++      value->SetString("note", "DrawSlug (not fully serialized)");
++      break;
++    }
++    case PaintOpType::kDrawVertices: {
++      // Mesh drawing - complex type
++      value->SetString("note", "DrawVertices (not fully serialized)");
++      break;
++    }
++  }
++}
++
++// static
++void PaintOpJsonSerializer::SerializePaintOpBuffer(
++    const PaintOpBuffer& buffer,
++    base::trace_event::TracedValue* value) {
++  value->BeginArray("ops");
++  for (const PaintOp& op : buffer) {
++    value->BeginDictionary();
++    SerializePaintOp(op, value);
++    value->EndDictionary();
++  }
++  value->EndArray();
++  value->SetInteger("opCount", static_cast<int>(buffer.size()));
++  value->SetInteger("totalOpCount", static_cast<int>(buffer.total_op_count()));
++}
++
++// static
++void PaintOpJsonSerializer::SerializeDisplayItemList(
++    const DisplayItemList& list,
++    base::trace_event::TracedValue* value) {
++  SerializePaintOpBuffer(list.paint_op_buffer(), value);
++
++  // Add bounds if available
++  if (list.bounds().has_value()) {
++    value->BeginArray("bounds");
++    value->AppendInteger(list.bounds()->x());
++    value->AppendInteger(list.bounds()->y());
++    value->AppendInteger(list.bounds()->width());
++    value->AppendInteger(list.bounds()->height());
++    value->EndArray();
++  }
++}
++
++// static
++std::string PaintOpJsonSerializer::DisplayItemListToJson(
++    const DisplayItemList& list) {
++  base::trace_event::TracedValueJSON traced_value;
++  SerializeDisplayItemList(list, &traced_value);
++  return traced_value.ToFormattedJSON();
++}
++
++}  // namespace cc
+diff --git a/cc/paint/paint_op_json_serializer.h b/cc/paint/paint_op_json_serializer.h
+new file mode 100644
+index 0000000000..23d4de8b13
+--- /dev/null
++++ b/cc/paint/paint_op_json_serializer.h
+@@ -0,0 +1,83 @@
++// Copyright 2024 The Chromium Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef CC_PAINT_PAINT_OP_JSON_SERIALIZER_H_
++#define CC_PAINT_PAINT_OP_JSON_SERIALIZER_H_
++
++#include <string>
++
++#include "base/trace_event/traced_value.h"
++#include "cc/paint/paint_export.h"
++
++namespace cc {
++
++class DisplayItemList;
++class PaintOp;
++class PaintOpBuffer;
++class PaintFlags;
++class CorePaintFlags;
++
++// Serializes paint operations to JSON format for debugging/tracing.
++// This provides human-readable output of paint ops, unlike the binary
++// SKP format used in production tracing.
++class CC_PAINT_EXPORT PaintOpJsonSerializer {
++ public:
++  // Serialize a single paint op to the traced value.
++  static void SerializePaintOp(const PaintOp& op,
++                               base::trace_event::TracedValue* value);
++
++  // Serialize an entire PaintOpBuffer to the traced value as an array.
++  static void SerializePaintOpBuffer(const PaintOpBuffer& buffer,
++                                     base::trace_event::TracedValue* value);
++
++  // Serialize a DisplayItemList's paint ops to the traced value.
++  static void SerializeDisplayItemList(const DisplayItemList& list,
++                                       base::trace_event::TracedValue* value);
++
++  // Convert a DisplayItemList to a JSON string.
++  static std::string DisplayItemListToJson(const DisplayItemList& list);
++
++ private:
++  // Helper to serialize PaintFlags to JSON.
++  static void SerializePaintFlags(const PaintFlags& flags,
++                                  base::trace_event::TracedValue* value);
++
++  // Helper to serialize CorePaintFlags to JSON.
++  static void SerializeCorePaintFlags(const CorePaintFlags& flags,
++                                      base::trace_event::TracedValue* value);
++
++  // Helper to serialize an SkRect.
++  static void SerializeSkRect(const char* name,
++                              const SkRect& rect,
++                              base::trace_event::TracedValue* value);
++
++  // Helper to serialize an SkRRect.
++  static void SerializeSkRRect(const char* name,
++                               const SkRRect& rrect,
++                               base::trace_event::TracedValue* value);
++
++  // Helper to serialize an SkM44 matrix.
++  static void SerializeSkM44(const char* name,
++                             const SkM44& matrix,
++                             base::trace_event::TracedValue* value);
++
++  // Helper to serialize an SkColor4f.
++  static void SerializeSkColor4f(const char* name,
++                                 const SkColor4f& color,
++                                 base::trace_event::TracedValue* value);
++
++  // Helper to serialize SkBlendMode.
++  static void SerializeSkBlendMode(const char* name,
++                                   SkBlendMode mode,
++                                   base::trace_event::TracedValue* value);
++
++  // Helper to serialize SkPath as SVG path string.
++  static void SerializeSkPath(const char* name,
++                              const SkPath& path,
++                              base::trace_event::TracedValue* value);
++};
++
++}  // namespace cc
++
++#endif  // CC_PAINT_PAINT_OP_JSON_SERIALIZER_H_

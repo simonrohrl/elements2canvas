@@ -1,1 +1,1 @@
-cp ~/Library/Application\ Support/Chromium/chrome_debug.log .
+rm -rf ./chrome_debug.log && cp ~/Library/Application\ Support/Chromium/chrome_debug.log .
