@@ -293,21 +293,57 @@ class PaintOpRenderer {
                 );
                 paint.setShader(shader);
             }
+
+            // Handle stroke style for gradient rects too
+            if (op.flags.style === 1) {
+                paint.setStyle(this.ck.PaintStyle.Stroke);
+                paint.setStrokeWidth(op.flags.strokeWidth || 1);
+
+                // Apply dash pattern if present (for dotted/dashed outlines)
+                if (op.flags.dashPattern && op.flags.dashPattern.intervals) {
+                    const intervals = op.flags.dashPattern.intervals;
+                    const phase = op.flags.dashPattern.phase || 0;
+                    const pathEffect = this.ck.PathEffect.MakeDash(intervals, phase);
+                    if (pathEffect) {
+                        paint.setPathEffect(pathEffect);
+                    }
+                }
+            } else {
+                paint.setStyle(this.ck.PaintStyle.Fill);
+            }
         } else if (op.flags) {
             const c = op.flags;
             paint.setColor(this.ck.Color4f(c.r || 0, c.g || 0, c.b || 0, c.a || 1));
+
+            // Handle stroke style (style: 1 = Stroke, 0 = Fill)
+            if (c.style === 1) {
+                paint.setStyle(this.ck.PaintStyle.Stroke);
+                paint.setStrokeWidth(c.strokeWidth || 1);
+
+                // Apply dash pattern if present (for dotted/dashed outlines)
+                if (c.dashPattern && c.dashPattern.intervals) {
+                    const intervals = c.dashPattern.intervals;
+                    const phase = c.dashPattern.phase || 0;
+                    const pathEffect = this.ck.PathEffect.MakeDash(intervals, phase);
+                    if (pathEffect) {
+                        paint.setPathEffect(pathEffect);
+                    }
+                }
+            } else {
+                paint.setStyle(this.ck.PaintStyle.Fill);
+            }
         } else {
             paint.setColor(this.ck.Color4f(0.5, 0.5, 0.5, 1));
+            paint.setStyle(this.ck.PaintStyle.Fill);
         }
-
-        paint.setStyle(this.ck.PaintStyle.Fill);
 
         const rect = this.ck.LTRBRect(op.rect[0], op.rect[1], op.rect[2], op.rect[3]);
         canvas.drawRect(rect, paint);
 
         if (this.debug) {
+            const styleInfo = op.flags?.style === 1 ? ' stroke' : ' fill';
             const shaderInfo = op.flags?.shaderType ? ` shader=${op.flags.shaderType}` : '';
-            this.log(`DrawRect [${op.rect.join(', ')}]${shaderInfo}`);
+            this.log(`DrawRect [${op.rect.join(', ')}]${styleInfo}${shaderInfo}`);
         }
 
         paint.delete();
@@ -353,6 +389,16 @@ class PaintOpRenderer {
             if (c.style === 1) {
                 paint.setStyle(this.ck.PaintStyle.Stroke);
                 paint.setStrokeWidth(c.strokeWidth || 1);
+
+                // Apply dash pattern if present (for dotted/dashed outlines)
+                if (c.dashPattern && c.dashPattern.intervals) {
+                    const intervals = c.dashPattern.intervals;
+                    const phase = c.dashPattern.phase || 0;
+                    const pathEffect = this.ck.PathEffect.MakeDash(intervals, phase);
+                    if (pathEffect) {
+                        paint.setPathEffect(pathEffect);
+                    }
+                }
             } else {
                 paint.setStyle(this.ck.PaintStyle.Fill);
             }
@@ -404,6 +450,16 @@ class PaintOpRenderer {
 
             if (op.flags.style === 1) {
                 paint.setStyle(this.ck.PaintStyle.Stroke);
+
+                // Apply dash pattern if present (for dotted/dashed outlines)
+                if (op.flags.dashPattern && op.flags.dashPattern.intervals) {
+                    const intervals = op.flags.dashPattern.intervals;
+                    const phase = op.flags.dashPattern.phase || 0;
+                    const pathEffect = this.ck.PathEffect.MakeDash(intervals, phase);
+                    if (pathEffect) {
+                        paint.setPathEffect(pathEffect);
+                    }
+                }
             } else {
                 paint.setStyle(this.ck.PaintStyle.Fill);
             }
@@ -636,19 +692,48 @@ class PaintArtifactCompositor {
             }
         }
 
-        // Apply effect opacity
+        // Apply effect (opacity and blend mode)
         const effectId = chunk.property_tree_state?.effect_id;
-        const effect = effectId !== undefined ? trees.getEffect(effectId) : { opacity: 1.0 };
+        const effect = effectId !== undefined ? trees.getEffect(effectId) : { opacity: 1.0, blend_mode: 'SrcOver' };
         const alpha = effect.opacity !== undefined ? effect.opacity : 1.0;
+        const blendMode = effect.blend_mode || 'SrcOver';
 
-        // Debug: log opacity for chunks with non-1.0 opacity
-        if (alpha < 1.0) {
-            console.log(`Chunk ${chunk.chunk_id}: effect_id=${effectId}, opacity=${alpha}, bounds=${JSON.stringify(chunk.bounds)}`);
+        // Check if we need a saveLayer for opacity or blend mode
+        const needsLayer = alpha < 1.0 || (blendMode !== 'SrcOver');
+
+        // Debug: log effects for chunks with non-default effects
+        if (needsLayer) {
+            console.log(`Chunk ${chunk.chunk_id}: effect_id=${effectId}, opacity=${alpha}, blend_mode=${blendMode}`);
         }
 
-        if (alpha < 1.0) {
+        if (needsLayer) {
             const layerPaint = new this.ck.Paint();
             layerPaint.setAlphaf(alpha);
+
+            // Map blend mode string to CanvasKit blend mode
+            const blendModeMap = {
+                'SrcOver': this.ck.BlendMode.SrcOver,
+                'Multiply': this.ck.BlendMode.Multiply,
+                'Screen': this.ck.BlendMode.Screen,
+                'Overlay': this.ck.BlendMode.Overlay,
+                'Darken': this.ck.BlendMode.Darken,
+                'Lighten': this.ck.BlendMode.Lighten,
+                'ColorDodge': this.ck.BlendMode.ColorDodge,
+                'ColorBurn': this.ck.BlendMode.ColorBurn,
+                'HardLight': this.ck.BlendMode.HardLight,
+                'SoftLight': this.ck.BlendMode.SoftLight,
+                'Difference': this.ck.BlendMode.Difference,
+                'Exclusion': this.ck.BlendMode.Exclusion,
+                'Hue': this.ck.BlendMode.Hue,
+                'Saturation': this.ck.BlendMode.Saturation,
+                'Color': this.ck.BlendMode.Color,
+                'Luminosity': this.ck.BlendMode.Luminosity,
+            };
+
+            if (blendModeMap[blendMode]) {
+                layerPaint.setBlendMode(blendModeMap[blendMode]);
+            }
+
             canvas.saveLayer(layerPaint);
             layerPaint.delete();
         }
@@ -658,7 +743,7 @@ class PaintArtifactCompositor {
             this.renderer.renderOps(canvas, chunk.paint_ops);
         }
 
-        if (alpha < 1.0) {
+        if (needsLayer) {
             canvas.restore();
         }
 
