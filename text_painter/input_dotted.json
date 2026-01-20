@@ -1,0 +1,35 @@
+{
+  "fragment": {
+    "text": "Dotted",
+    "from": 0,
+    "to": 6,
+    "shape_result": {
+      "bounds": { "x": 0, "y": -14, "width": 50, "height": 18 },
+      "runs": [{
+        "font": {
+          "family": "Arial", "size": 16, "weight": 400, "width": 5, "slant": 0,
+          "scaleX": 1, "skewX": 0, "embolden": false, "linearMetrics": true,
+          "subpixel": true, "forceAutoHinting": false, "typefaceId": 27,
+          "ascent": 14, "descent": 4
+        },
+        "glyphs": [37, 82, 87, 87, 72, 71],
+        "positions": [0, 10, 18, 26, 34, 42],
+        "offsetX": 0, "offsetY": 0, "positioning": 1
+      }]
+    }
+  },
+  "box": { "x": 100.0, "y": 200.0, "width": 100.0, "height": 20.0 },
+  "style": {
+    "fill_color": "#ff000000", "stroke_color": "#ff000000", "stroke_width": 0.0,
+    "emphasis_mark_color": "#ff000000", "current_color": "#ff000000",
+    "color_scheme": "light", "paint_order": "normal"
+  },
+  "decorations": [{
+    "line": "underline", "style": "dotted", "color": "#ff0000ff",
+    "thickness": 2.0, "underline_offset": 2.0
+  }],
+  "paint_phase": "foreground", "visibility": "visible",
+  "writing_mode": "horizontal-tb", "is_horizontal": true,
+  "node_id": 789,
+  "state_ids": { "transform_id": 5, "clip_id": 26, "effect_id": 1 }
+}

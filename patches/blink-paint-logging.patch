@@ -68,19 +68,31 @@ index 29dc5c26dd..95dd6333f7 100644
    bool IsOpaque() const;
  
    // Returns true if the shader looks like it is valid (ie the members required
+diff --git a/third_party/blink/renderer/core/paint/paint_layer_painter.cc b/third_party/blink/renderer/core/paint/paint_layer_painter.cc
+index 317149bc68..488324dd43 100644
+--- a/third_party/blink/renderer/core/paint/paint_layer_painter.cc
++++ b/third_party/blink/renderer/core/paint/paint_layer_painter.cc
+@@ -38,7 +38,6 @@
+ #include "third_party/blink/renderer/platform/graphics/paint/scoped_paint_chunk_properties.h"
+ #include "third_party/blink/renderer/platform/graphics/paint/subsequence_recorder.h"
+ #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
+-#include "third_party/blink/renderer/platform/wtf/casting.h"
+ #include "ui/gfx/geometry/point3_f.h"
+ 
+ namespace blink {
 diff --git a/third_party/blink/renderer/platform/BUILD.gn b/third_party/blink/renderer/platform/BUILD.gn
-index e2256766d7..351700eb0b 100644
+index e2256766d7..414407b3a8 100644
 --- a/third_party/blink/renderer/platform/BUILD.gn
 +++ b/third_party/blink/renderer/platform/BUILD.gn
-@@ -920,6 +920,8 @@ component("platform") {
-     "graphics/compositing/layers_as_json.h",
-     "graphics/compositing/paint_artifact_compositor.cc",
-     "graphics/compositing/paint_artifact_compositor.h",
-+    "graphics/compositing/paint_artifact_json_serializer.cc",
-+    "graphics/compositing/paint_artifact_json_serializer.h",
-     "graphics/compositing/paint_chunks_to_cc_layer.cc",
-     "graphics/compositing/paint_chunks_to_cc_layer.h",
-     "graphics/compositing/pending_layer.cc",
+@@ -1154,6 +1154,8 @@ component("platform") {
+     "graphics/paint/paint_artifact.h",
+     "graphics/paint/paint_canvas.h",
+     "graphics/paint/paint_chunk.cc",
++    "graphics/paint/paint_artifact_serializer.cc",
++    "graphics/paint/paint_artifact_serializer.h",
+     "graphics/paint/paint_chunk.h",
+     "graphics/paint/paint_chunk_subset.cc",
+     "graphics/paint/paint_chunk_subset.h",
 diff --git a/third_party/blink/renderer/platform/fonts/shaping/text_blob_serializer.cc b/third_party/blink/renderer/platform/fonts/shaping/text_blob_serializer.cc
 new file mode 100644
 index 0000000000..36cbff9230
@@ -247,63 +259,23 @@ index 0000000000..f9a06e987b
 +}  // namespace blink
 +
 +#endif  // THIRD_PARTY_BLINK_RENDERER_PLATFORM_FONTS_SHAPING_TEXT_BLOB_SERIALIZER_H_
-diff --git a/third_party/blink/renderer/platform/graphics/compositing/paint_artifact_compositor.cc b/third_party/blink/renderer/platform/graphics/compositing/paint_artifact_compositor.cc
-index d52098547f..b8f2fa5a22 100644
---- a/third_party/blink/renderer/platform/graphics/compositing/paint_artifact_compositor.cc
-+++ b/third_party/blink/renderer/platform/graphics/compositing/paint_artifact_compositor.cc
-@@ -5,6 +5,7 @@
- #include "third_party/blink/renderer/platform/graphics/compositing/paint_artifact_compositor.h"
- 
- #include <algorithm>
-+#include "third_party/blink/renderer/platform/graphics/compositing/paint_artifact_json_serializer.h"
- #include <memory>
- #include <utility>
- 
-@@ -1021,6 +1022,13 @@ void PaintArtifactCompositor::Update(
-   OldPendingLayerMatcher old_pending_layer_matcher(std::move(pending_layers_));
-   CHECK(painted_scroll_translations_.empty());
- 
-+  // Log raw PaintArtifact BEFORE layerization
-+  auto paint_artifact_json = SerializePaintArtifact(artifact);
-+  auto paint_artifact_props_json = SerializePaintArtifactPropertyTrees(artifact);
-+  LOG(ERROR) << "PAINT_ARTIFACT: " << paint_artifact_json->ToJSONString().Utf8();
-+  LOG(ERROR) << "PAINT_ARTIFACT_PROPERTY_TREES: "
-+             << paint_artifact_props_json->ToJSONString().Utf8();
-+
-   // Make compositing decisions, storing the result in |pending_layers_|.
-   pending_layers_ = Layerizer(*this, artifact, old_size).Layerize();
-   PendingLayer::DecompositeTransforms(pending_layers_);
-@@ -1160,6 +1168,19 @@ void PaintArtifactCompositor::Update(
-            << GetLayersAsJSON(VLOG_IS_ON(3) ? 0xffffffff : 0)
-                   ->ToPrettyJSONString()
-                   .Utf8();
-+
-+  // Log Blink-level layer and property tree data for debugging/analysis
-+  auto blink_layers_json =
-+      SerializePendingLayersWithPaintOps(pending_layers_, artifact);
-+  auto blink_property_trees_json =
-+      SerializeBlinkPropertyTrees(pending_layers_, artifact);
-+  LOG(ERROR) << "BLINK_LAYERS: " << blink_layers_json->ToJSONString().Utf8();
-+  LOG(ERROR) << "BLINK_PROPERTY_TREES: "
-+             << blink_property_trees_json->ToJSONString().Utf8();
-+
-+  // Log raw paint ops WITHOUT chunk grouping - flat list in paint order
-+  auto raw_paint_ops_json = SerializeRawPaintOps(artifact);
-+  LOG(ERROR) << "RAW_PAINT_OPS: " << raw_paint_ops_json->ToJSONString().Utf8();
- }
- 
- bool PaintArtifactCompositor::TryFastPathUpdate(
 diff --git a/third_party/blink/renderer/platform/graphics/compositing/paint_artifact_json_serializer.cc b/third_party/blink/renderer/platform/graphics/compositing/paint_artifact_json_serializer.cc
 new file mode 100644
-index 0000000000..8981fabef7
+index 0000000000..e69de29bb2
+diff --git a/third_party/blink/renderer/platform/graphics/compositing/paint_artifact_json_serializer.h b/third_party/blink/renderer/platform/graphics/compositing/paint_artifact_json_serializer.h
+new file mode 100644
+index 0000000000..e69de29bb2
+diff --git a/third_party/blink/renderer/platform/graphics/paint/paint_artifact_serializer.cc b/third_party/blink/renderer/platform/graphics/paint/paint_artifact_serializer.cc
+new file mode 100644
+index 0000000000..a928159e5f
 --- /dev/null
-+++ b/third_party/blink/renderer/platform/graphics/compositing/paint_artifact_json_serializer.cc
-@@ -0,0 +1,1018 @@
++++ b/third_party/blink/renderer/platform/graphics/paint/paint_artifact_serializer.cc
+@@ -0,0 +1,838 @@
 +// Copyright 2024 The Chromium Authors
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
 +
-+#include "third_party/blink/renderer/platform/graphics/compositing/paint_artifact_json_serializer.h"
++#include "third_party/blink/renderer/platform/graphics/paint/paint_artifact_serializer.h"
 +
 +#include <unordered_map>
 +
@@ -311,27 +283,24 @@ index 0000000000..8981fabef7
 +#include "cc/paint/draw_looper.h"
 +#include "cc/paint/paint_filter.h"
 +#include "cc/paint/paint_op.h"
-+#include "cc/paint/path_effect.h"
-+#include "third_party/skia/src/core/SkPathEffectBase.h"
 +#include "cc/paint/paint_op_buffer_iterator.h"
++#include "cc/paint/path_effect.h"
 +#include "third_party/blink/renderer/platform/allow_discouraged_type.h"
-+#include "third_party/blink/renderer/platform/graphics/compositing/pending_layer.h"
 +#include "third_party/blink/renderer/platform/graphics/paint/clip_paint_property_node.h"
 +#include "third_party/blink/renderer/platform/graphics/paint/drawing_display_item.h"
 +#include "third_party/blink/renderer/platform/graphics/paint/effect_paint_property_node.h"
 +#include "third_party/blink/renderer/platform/graphics/paint/paint_artifact.h"
-+#include "third_party/blink/renderer/platform/graphics/paint/paint_chunk_subset.h"
 +#include "third_party/blink/renderer/platform/graphics/paint/transform_paint_property_node.h"
 +#include "third_party/blink/renderer/platform/json/json_values.h"
-+#include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
 +#include "third_party/skia/include/core/SkFont.h"
-+#include "third_party/skia/include/core/SkPaint.h"
 +#include "third_party/skia/include/core/SkFontStyle.h"
++#include "third_party/skia/include/core/SkPaint.h"
 +#include "third_party/skia/include/core/SkPath.h"
 +#include "third_party/skia/include/core/SkRSXform.h"
 +#include "third_party/skia/include/core/SkTextBlob.h"
 +#include "third_party/skia/include/core/SkTypeface.h"
 +#include "third_party/skia/include/utils/SkParsePath.h"
++#include "third_party/skia/src/core/SkPathEffectBase.h"
 +#include "third_party/skia/src/core/SkTextBlobPriv.h"
 +#include "ui/gfx/geometry/transform.h"
 +
@@ -356,16 +325,6 @@ index 0000000000..8981fabef7
 +  json->PushDouble(rect.top());
 +  json->PushDouble(rect.right());
 +  json->PushDouble(rect.bottom());
-+  return json;
-+}
-+
-+// Helper to serialize gfx::Rect
-+std::unique_ptr<JSONArray> SerializeGfxRect(const gfx::Rect& rect) {
-+  auto json = std::make_unique<JSONArray>();
-+  json->PushInteger(rect.x());
-+  json->PushInteger(rect.y());
-+  json->PushInteger(rect.width());
-+  json->PushInteger(rect.height());
 +  return json;
 +}
 +
@@ -610,31 +569,48 @@ index 0000000000..8981fabef7
 +      break;
 +    }
 +    case cc::PaintOpType::kDrawDRRect: {
-+      // DrawDRRect draws between outer and inner rounded rects (used for borders, box-shadow inset)
++      // DrawDRRect draws between outer and inner rounded rects (used for
++      // borders, box-shadow inset)
 +      const auto& draw_op = static_cast<const cc::DrawDRRectOp&>(op);
 +      // Outer rrect
 +      json->SetArray("outer_rect", SerializeRectLTRB(draw_op.outer.rect()));
 +      auto outer_radii = std::make_unique<JSONArray>();
-+      outer_radii->PushDouble(draw_op.outer.radii(SkRRect::kUpperLeft_Corner).x());
-+      outer_radii->PushDouble(draw_op.outer.radii(SkRRect::kUpperLeft_Corner).y());
-+      outer_radii->PushDouble(draw_op.outer.radii(SkRRect::kUpperRight_Corner).x());
-+      outer_radii->PushDouble(draw_op.outer.radii(SkRRect::kUpperRight_Corner).y());
-+      outer_radii->PushDouble(draw_op.outer.radii(SkRRect::kLowerRight_Corner).x());
-+      outer_radii->PushDouble(draw_op.outer.radii(SkRRect::kLowerRight_Corner).y());
-+      outer_radii->PushDouble(draw_op.outer.radii(SkRRect::kLowerLeft_Corner).x());
-+      outer_radii->PushDouble(draw_op.outer.radii(SkRRect::kLowerLeft_Corner).y());
++      outer_radii->PushDouble(
++          draw_op.outer.radii(SkRRect::kUpperLeft_Corner).x());
++      outer_radii->PushDouble(
++          draw_op.outer.radii(SkRRect::kUpperLeft_Corner).y());
++      outer_radii->PushDouble(
++          draw_op.outer.radii(SkRRect::kUpperRight_Corner).x());
++      outer_radii->PushDouble(
++          draw_op.outer.radii(SkRRect::kUpperRight_Corner).y());
++      outer_radii->PushDouble(
++          draw_op.outer.radii(SkRRect::kLowerRight_Corner).x());
++      outer_radii->PushDouble(
++          draw_op.outer.radii(SkRRect::kLowerRight_Corner).y());
++      outer_radii->PushDouble(
++          draw_op.outer.radii(SkRRect::kLowerLeft_Corner).x());
++      outer_radii->PushDouble(
++          draw_op.outer.radii(SkRRect::kLowerLeft_Corner).y());
 +      json->SetArray("outer_radii", std::move(outer_radii));
 +      // Inner rrect
 +      json->SetArray("inner_rect", SerializeRectLTRB(draw_op.inner.rect()));
 +      auto inner_radii = std::make_unique<JSONArray>();
-+      inner_radii->PushDouble(draw_op.inner.radii(SkRRect::kUpperLeft_Corner).x());
-+      inner_radii->PushDouble(draw_op.inner.radii(SkRRect::kUpperLeft_Corner).y());
-+      inner_radii->PushDouble(draw_op.inner.radii(SkRRect::kUpperRight_Corner).x());
-+      inner_radii->PushDouble(draw_op.inner.radii(SkRRect::kUpperRight_Corner).y());
-+      inner_radii->PushDouble(draw_op.inner.radii(SkRRect::kLowerRight_Corner).x());
-+      inner_radii->PushDouble(draw_op.inner.radii(SkRRect::kLowerRight_Corner).y());
-+      inner_radii->PushDouble(draw_op.inner.radii(SkRRect::kLowerLeft_Corner).x());
-+      inner_radii->PushDouble(draw_op.inner.radii(SkRRect::kLowerLeft_Corner).y());
++      inner_radii->PushDouble(
++          draw_op.inner.radii(SkRRect::kUpperLeft_Corner).x());
++      inner_radii->PushDouble(
++          draw_op.inner.radii(SkRRect::kUpperLeft_Corner).y());
++      inner_radii->PushDouble(
++          draw_op.inner.radii(SkRRect::kUpperRight_Corner).x());
++      inner_radii->PushDouble(
++          draw_op.inner.radii(SkRRect::kUpperRight_Corner).y());
++      inner_radii->PushDouble(
++          draw_op.inner.radii(SkRRect::kLowerRight_Corner).x());
++      inner_radii->PushDouble(
++          draw_op.inner.radii(SkRRect::kLowerRight_Corner).y());
++      inner_radii->PushDouble(
++          draw_op.inner.radii(SkRRect::kLowerLeft_Corner).x());
++      inner_radii->PushDouble(
++          draw_op.inner.radii(SkRRect::kLowerLeft_Corner).y());
 +      json->SetArray("inner_radii", std::move(inner_radii));
 +      json->SetObject("flags", SerializePaintFlags(draw_op.flags));
 +      break;
@@ -659,7 +635,8 @@ index 0000000000..8981fabef7
 +          run_json->SetInteger("glyphCount", static_cast<int>(count));
 +
 +          // Serialize glyph IDs
-+          // SAFETY: glyphs points to count elements as guaranteed by iter.glyphCount()
++          // SAFETY: glyphs points to count elements as guaranteed by
++          // iter.glyphCount()
 +          auto glyphs_array = std::make_unique<JSONArray>();
 +          const SkGlyphID* glyphs = iter.glyphs();
 +          for (uint32_t i = 0; i < count; ++i) {
@@ -860,7 +837,8 @@ index 0000000000..8981fabef7
 +class PropertyTreeIdMapper {
 + public:
 +  int GetOrAssignTransformId(const TransformPaintPropertyNode* node) {
-+    if (!node) return -1;
++    if (!node)
++      return -1;
 +    const void* key = static_cast<const void*>(node);
 +    auto it = transform_ids_.find(key);
 +    if (it != transform_ids_.end()) {
@@ -876,7 +854,8 @@ index 0000000000..8981fabef7
 +  }
 +
 +  int GetOrAssignClipId(const ClipPaintPropertyNode* node) {
-+    if (!node) return -1;
++    if (!node)
++      return -1;
 +    const void* key = static_cast<const void*>(node);
 +    auto it = clip_ids_.find(key);
 +    if (it != clip_ids_.end()) {
@@ -892,7 +871,8 @@ index 0000000000..8981fabef7
 +  }
 +
 +  int GetOrAssignEffectId(const EffectPaintPropertyNode* node) {
-+    if (!node) return -1;
++    if (!node)
++      return -1;
 +    const void* key = static_cast<const void*>(node);
 +    auto it = effect_ids_.find(key);
 +    if (it != effect_ids_.end()) {
@@ -918,86 +898,16 @@ index 0000000000..8981fabef7
 +  }
 +
 + private:
-+  std::unordered_map<const void*, int> transform_ids_
-+      ALLOW_DISCOURAGED_TYPE("Using void* to avoid blink-gc issues with GC pointers");
-+  std::unordered_map<const void*, int> clip_ids_
-+      ALLOW_DISCOURAGED_TYPE("Using void* to avoid blink-gc issues with GC pointers");
-+  std::unordered_map<const void*, int> effect_ids_
-+      ALLOW_DISCOURAGED_TYPE("Using void* to avoid blink-gc issues with GC pointers");
++  std::unordered_map<const void*, int> transform_ids_ ALLOW_DISCOURAGED_TYPE(
++      "Using void* to avoid blink-gc issues with GC pointers");
++  std::unordered_map<const void*, int> clip_ids_ ALLOW_DISCOURAGED_TYPE(
++      "Using void* to avoid blink-gc issues with GC pointers");
++  std::unordered_map<const void*, int> effect_ids_ ALLOW_DISCOURAGED_TYPE(
++      "Using void* to avoid blink-gc issues with GC pointers");
 +  int next_transform_id_ = 0;
 +  int next_clip_id_ = 0;
 +  int next_effect_id_ = 0;
 +};
-+
-+// Serialize a single PendingLayer
-+std::unique_ptr<JSONObject> SerializePendingLayer(
-+    const PendingLayer& layer,
-+    int layer_id,
-+    PropertyTreeIdMapper& id_mapper) {
-+  auto json = std::make_unique<JSONObject>();
-+
-+  json->SetInteger("layer_id", layer_id);
-+  json->SetString("debug_name", layer.DebugName());
-+
-+  // Bounds
-+  const gfx::RectF& bounds = layer.BoundsForTesting();
-+  auto bounds_json = std::make_unique<JSONObject>();
-+  bounds_json->SetDouble("x", bounds.x());
-+  bounds_json->SetDouble("y", bounds.y());
-+  bounds_json->SetDouble("width", bounds.width());
-+  bounds_json->SetDouble("height", bounds.height());
-+  json->SetObject("bounds", std::move(bounds_json));
-+
-+  // Property tree state
-+  const PropertyTreeState& state = layer.GetPropertyTreeState();
-+  auto props_json = std::make_unique<JSONObject>();
-+  props_json->SetInteger("transform_id",
-+                         id_mapper.GetOrAssignTransformId(&state.Transform()));
-+  props_json->SetInteger("clip_id",
-+                         id_mapper.GetOrAssignClipId(&state.Clip()));
-+  props_json->SetInteger("effect_id",
-+                         id_mapper.GetOrAssignEffectId(&state.Effect()));
-+  json->SetObject("property_tree_state", std::move(props_json));
-+
-+  json->SetBoolean("draws_content", layer.DrawsContent());
-+
-+  // Paint chunks and their paint ops
-+  auto chunks_array = std::make_unique<JSONArray>();
-+  int chunk_id = 0;
-+  for (const auto& chunk : layer.Chunks()) {
-+    auto chunk_json = std::make_unique<JSONObject>();
-+    chunk_json->SetInteger("chunk_id", chunk_id++);
-+    chunk_json->SetArray("bounds", SerializeGfxRect(chunk.bounds));
-+    chunk_json->SetArray("drawable_bounds",
-+                         SerializeGfxRect(chunk.drawable_bounds));
-+
-+    // Serialize paint ops from display items in this chunk
-+    auto paint_ops_array = std::make_unique<JSONArray>();
-+    const PaintArtifact& artifact = layer.Chunks().GetPaintArtifact();
-+    // Use UNSAFE_TODO to wrap the unsafe buffer access - this is safe because
-+    // begin_index and end_index are validated by the PaintChunk structure.
-+    auto display_items = UNSAFE_TODO(
-+        artifact.GetDisplayItemList().ItemsInRange(chunk.begin_index,
-+                                                   chunk.end_index));
-+    for (const DisplayItem& item : display_items) {
-+      if (item.IsDrawing()) {
-+        const auto& drawing = To<DrawingDisplayItem>(item);
-+        const cc::PaintRecord& record = drawing.GetPaintRecord();
-+        for (cc::PaintOpBuffer::Iterator it(record.buffer()); it; ++it) {
-+          auto op_json = std::make_unique<JSONObject>();
-+          SerializePaintOpRecursive(*it, op_json.get());
-+          paint_ops_array->PushObject(std::move(op_json));
-+        }
-+      }
-+    }
-+    chunk_json->SetArray("paint_ops", std::move(paint_ops_array));
-+
-+    chunks_array->PushObject(std::move(chunk_json));
-+  }
-+  json->SetArray("paint_chunks", std::move(chunks_array));
-+
-+  return json;
-+}
 +
 +// Serialize transform tree nodes - takes the id map that stores void* keys
 +std::unique_ptr<JSONObject> SerializeTransformTree(
@@ -1140,125 +1050,8 @@ index 0000000000..8981fabef7
 +
 +}  // namespace
 +
-+std::unique_ptr<JSONObject> SerializePendingLayersWithPaintOps(
-+    const PendingLayers& pending_layers,
++std::unique_ptr<JSONObject> SerializeRawPaintOps(
 +    const PaintArtifact& artifact) {
-+  auto json = std::make_unique<JSONObject>();
-+  auto layers_array = std::make_unique<JSONArray>();
-+
-+  PropertyTreeIdMapper id_mapper;
-+
-+  int layer_id = 0;
-+  for (const PendingLayer& layer : pending_layers) {
-+    layers_array->PushObject(
-+        SerializePendingLayer(layer, layer_id++, id_mapper));
-+  }
-+
-+  json->SetArray("BlinkLayers", std::move(layers_array));
-+  return json;
-+}
-+
-+std::unique_ptr<JSONObject> SerializeBlinkPropertyTrees(
-+    const PendingLayers& pending_layers,
-+    const PaintArtifact& artifact) {
-+  auto json = std::make_unique<JSONObject>();
-+
-+  // First, collect all property tree nodes from all layers
-+  PropertyTreeIdMapper id_mapper;
-+  for (const PendingLayer& layer : pending_layers) {
-+    const PropertyTreeState& state = layer.GetPropertyTreeState();
-+    id_mapper.GetOrAssignTransformId(&state.Transform());
-+    id_mapper.GetOrAssignClipId(&state.Clip());
-+    id_mapper.GetOrAssignEffectId(&state.Effect());
-+  }
-+
-+  json->SetObject("transform_tree",
-+                  SerializeTransformTree(id_mapper.GetTransformIds()));
-+  json->SetObject("clip_tree", SerializeClipTree(id_mapper.GetClipIds()));
-+  json->SetObject("effect_tree", SerializeEffectTree(id_mapper.GetEffectIds()));
-+
-+  return json;
-+}
-+
-+std::unique_ptr<JSONObject> SerializePaintArtifact(
-+    const PaintArtifact& artifact) {
-+  auto json = std::make_unique<JSONObject>();
-+  auto chunks_array = std::make_unique<JSONArray>();
-+
-+  PropertyTreeIdMapper id_mapper;
-+
-+  int chunk_id = 0;
-+  for (const PaintChunk& chunk : artifact.GetPaintChunks()) {
-+    auto chunk_json = std::make_unique<JSONObject>();
-+    chunk_json->SetInteger("chunk_id", chunk_id++);
-+    chunk_json->SetArray("bounds", SerializeGfxRect(chunk.bounds));
-+    chunk_json->SetArray("drawable_bounds",
-+                         SerializeGfxRect(chunk.drawable_bounds));
-+
-+    // Debug name from the display item id
-+    if (chunk.id.client_id) {
-+      chunk_json->SetString("debug_name",
-+                            chunk.id.ToString(artifact).Utf8().c_str());
-+    }
-+
-+    // Property tree state for this chunk
-+    auto props_json = std::make_unique<JSONObject>();
-+    props_json->SetInteger("transform_id",
-+                           id_mapper.GetOrAssignTransformId(&chunk.properties.Transform().Unalias()));
-+    props_json->SetInteger("clip_id",
-+                           id_mapper.GetOrAssignClipId(&chunk.properties.Clip().Unalias()));
-+    props_json->SetInteger("effect_id",
-+                           id_mapper.GetOrAssignEffectId(&chunk.properties.Effect().Unalias()));
-+    chunk_json->SetObject("property_tree_state", std::move(props_json));
-+
-+    // Serialize paint ops from display items in this chunk
-+    auto paint_ops_array = std::make_unique<JSONArray>();
-+    // Use UNSAFE_TODO to wrap the unsafe buffer access - this is safe because
-+    // begin_index and end_index are validated by the PaintChunk structure.
-+    auto display_items = UNSAFE_TODO(
-+        artifact.GetDisplayItemList().ItemsInRange(chunk.begin_index,
-+                                                   chunk.end_index));
-+    for (const DisplayItem& item : display_items) {
-+      if (item.IsDrawing()) {
-+        const auto& drawing = To<DrawingDisplayItem>(item);
-+        const cc::PaintRecord& record = drawing.GetPaintRecord();
-+        for (cc::PaintOpBuffer::Iterator it(record.buffer()); it; ++it) {
-+          auto op_json = std::make_unique<JSONObject>();
-+          SerializePaintOpRecursive(*it, op_json.get());
-+          paint_ops_array->PushObject(std::move(op_json));
-+        }
-+      }
-+    }
-+    chunk_json->SetArray("paint_ops", std::move(paint_ops_array));
-+
-+    chunks_array->PushObject(std::move(chunk_json));
-+  }
-+
-+  json->SetArray("PaintChunks", std::move(chunks_array));
-+  return json;
-+}
-+
-+std::unique_ptr<JSONObject> SerializePaintArtifactPropertyTrees(
-+    const PaintArtifact& artifact) {
-+  auto json = std::make_unique<JSONObject>();
-+
-+  // Collect all property tree nodes from all chunks
-+  PropertyTreeIdMapper id_mapper;
-+  for (const PaintChunk& chunk : artifact.GetPaintChunks()) {
-+    id_mapper.GetOrAssignTransformId(&chunk.properties.Transform().Unalias());
-+    id_mapper.GetOrAssignClipId(&chunk.properties.Clip().Unalias());
-+    id_mapper.GetOrAssignEffectId(&chunk.properties.Effect().Unalias());
-+  }
-+
-+  json->SetObject("transform_tree",
-+                  SerializeTransformTree(id_mapper.GetTransformIds()));
-+  json->SetObject("clip_tree", SerializeClipTree(id_mapper.GetClipIds()));
-+  json->SetObject("effect_tree", SerializeEffectTree(id_mapper.GetEffectIds()));
-+
-+  return json;
-+}
-+
-+std::unique_ptr<JSONObject> SerializeRawPaintOps(const PaintArtifact& artifact) {
 +  auto json = std::make_unique<JSONObject>();
 +  auto paint_ops_array = std::make_unique<JSONArray>();
 +
@@ -1275,17 +1068,16 @@ index 0000000000..8981fabef7
 +  // Second pass: iterate through chunks to get property tree state for each op
 +  for (const PaintChunk& chunk : artifact.GetPaintChunks()) {
 +    // Get property tree IDs for this chunk
-+    int transform_id = id_mapper.GetOrAssignTransformId(
-+        &chunk.properties.Transform().Unalias());
-+    int clip_id = id_mapper.GetOrAssignClipId(
-+        &chunk.properties.Clip().Unalias());
-+    int effect_id = id_mapper.GetOrAssignEffectId(
-+        &chunk.properties.Effect().Unalias());
++    int transform_id =
++        id_mapper.GetOrAssignTransformId(&chunk.properties.Transform().Unalias());
++    int clip_id =
++        id_mapper.GetOrAssignClipId(&chunk.properties.Clip().Unalias());
++    int effect_id =
++        id_mapper.GetOrAssignEffectId(&chunk.properties.Effect().Unalias());
 +
 +    // Iterate through display items in this chunk
-+    auto display_items = UNSAFE_TODO(
-+        artifact.GetDisplayItemList().ItemsInRange(chunk.begin_index,
-+                                                   chunk.end_index));
++    auto display_items = UNSAFE_TODO(artifact.GetDisplayItemList().ItemsInRange(
++        chunk.begin_index, chunk.end_index));
 +    for (const DisplayItem& item : display_items) {
 +      if (item.IsDrawing()) {
 +        const auto& drawing = To<DrawingDisplayItem>(item);
@@ -1317,64 +1109,76 @@ index 0000000000..8981fabef7
 +}
 +
 +}  // namespace blink
-diff --git a/third_party/blink/renderer/platform/graphics/compositing/paint_artifact_json_serializer.h b/third_party/blink/renderer/platform/graphics/compositing/paint_artifact_json_serializer.h
+diff --git a/third_party/blink/renderer/platform/graphics/paint/paint_artifact_serializer.h b/third_party/blink/renderer/platform/graphics/paint/paint_artifact_serializer.h
 new file mode 100644
-index 0000000000..7378e7efc4
+index 0000000000..513bcb4d44
 --- /dev/null
-+++ b/third_party/blink/renderer/platform/graphics/compositing/paint_artifact_json_serializer.h
-@@ -0,0 +1,55 @@
++++ b/third_party/blink/renderer/platform/graphics/paint/paint_artifact_serializer.h
+@@ -0,0 +1,37 @@
 +// Copyright 2024 The Chromium Authors
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
 +
-+#ifndef THIRD_PARTY_BLINK_RENDERER_PLATFORM_GRAPHICS_COMPOSITING_PAINT_ARTIFACT_JSON_SERIALIZER_H_
-+#define THIRD_PARTY_BLINK_RENDERER_PLATFORM_GRAPHICS_COMPOSITING_PAINT_ARTIFACT_JSON_SERIALIZER_H_
++#ifndef THIRD_PARTY_BLINK_RENDERER_PLATFORM_GRAPHICS_PAINT_PAINT_ARTIFACT_SERIALIZER_H_
++#define THIRD_PARTY_BLINK_RENDERER_PLATFORM_GRAPHICS_PAINT_PAINT_ARTIFACT_SERIALIZER_H_
 +
-+#include "third_party/blink/renderer/platform/graphics/compositing/pending_layer.h"
-+#include "third_party/blink/renderer/platform/platform_export.h"
 +#include <memory>
++
++#include "third_party/blink/renderer/platform/platform_export.h"
 +
 +namespace blink {
 +
 +class JSONObject;
 +class PaintArtifact;
 +
-+// Serializes PendingLayers with paint ops to JSON format compatible with
-+// layers.json structure. This captures Blink-level compositor data after
-+// layerization but before handoff to CC.
-+PLATFORM_EXPORT std::unique_ptr<JSONObject> SerializePendingLayersWithPaintOps(
-+    const PendingLayers& pending_layers,
-+    const PaintArtifact& artifact);
-+
-+// Serializes Blink property trees (transform, effect, clip) to JSON format
-+// compatible with property_trees.json structure.
-+PLATFORM_EXPORT std::unique_ptr<JSONObject> SerializeBlinkPropertyTrees(
-+    const PendingLayers& pending_layers,
-+    const PaintArtifact& artifact);
-+
-+// Serializes the raw PaintArtifact (PaintChunks + DisplayItems) BEFORE
-+// layerization. This captures the paint data in its most granular form.
-+PLATFORM_EXPORT std::unique_ptr<JSONObject> SerializePaintArtifact(
-+    const PaintArtifact& artifact);
-+
-+// Serializes Blink property trees from raw PaintArtifact (before layerization).
-+PLATFORM_EXPORT std::unique_ptr<JSONObject> SerializePaintArtifactPropertyTrees(
-+    const PaintArtifact& artifact);
-+
 +// Serializes raw paint operations from PaintArtifact WITHOUT chunk grouping.
-+// This outputs a flat list of paint ops in paint order, similar to what would
-+// be captured by logging GraphicsContext calls directly.
++// This outputs a flat list of paint ops in paint order, with property tree
++// state attached to each op.
 +// Output format:
 +// {
 +//   "paint_ops": [
-+//     { "type": "DrawRectOp", "rect": [...], "flags": {...} },
++//     { "type": "DrawRectOp", "rect": [...], "flags": {...},
++//       "transform_id": N, "clip_id": N, "effect_id": N },
 +//     { "type": "DrawTextBlobOp", ... },
 +//     ...
-+//   ]
++//   ],
++//   "transform_tree": { "nodes": [...] },
++//   "clip_tree": { "nodes": [...] },
++//   "effect_tree": { "nodes": [...] }
 +// }
 +PLATFORM_EXPORT std::unique_ptr<JSONObject> SerializeRawPaintOps(
 +    const PaintArtifact& artifact);
 +
 +}  // namespace blink
 +
-+#endif  // THIRD_PARTY_BLINK_RENDERER_PLATFORM_GRAPHICS_COMPOSITING_PAINT_ARTIFACT_JSON_SERIALIZER_H_
++#endif  // THIRD_PARTY_BLINK_RENDERER_PLATFORM_GRAPHICS_PAINT_PAINT_ARTIFACT_SERIALIZER_H_
+diff --git a/third_party/blink/renderer/platform/graphics/paint/paint_controller.cc b/third_party/blink/renderer/platform/graphics/paint/paint_controller.cc
+index e043c1a98d..b1029efe0e 100644
+--- a/third_party/blink/renderer/platform/graphics/paint/paint_controller.cc
++++ b/third_party/blink/renderer/platform/graphics/paint/paint_controller.cc
+@@ -12,9 +12,11 @@
+ #include "cc/paint/paint_op.h"
+ #include "third_party/blink/renderer/platform/graphics/paint/drawing_display_item.h"
+ #include "third_party/blink/renderer/platform/graphics/paint/ignore_paint_timing_scope.h"
++#include "third_party/blink/renderer/platform/graphics/paint/paint_artifact_serializer.h"
+ #include "third_party/blink/renderer/platform/graphics/paint/paint_chunk_subset.h"
+ #include "third_party/blink/renderer/platform/graphics/paint/paint_under_invalidation_checker.h"
+ #include "third_party/blink/renderer/platform/instrumentation/tracing/trace_event.h"
++#include "third_party/blink/renderer/platform/json/json_values.h"
+ #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
+ #include "third_party/blink/renderer/platform/wtf/text/string_builder_stream.h"
+ #include "third_party/skia/include/core/SkTextBlob.h"
+@@ -837,6 +839,13 @@ const PaintArtifact& PaintController::CommitNewDisplayItems() {
+   paint_chunker_.Finish();
+ 
+   PaintArtifact& paint_artifact = *new_paint_artifact_;
++
++  // Log raw paint ops in JSON format for debugging/analysis.
++  // This captures paint data at the earliest point after paint chunks are
++  // finalized, before any compositing decisions are made.
++  auto raw_paint_ops_json = SerializeRawPaintOps(paint_artifact);
++  LOG(ERROR) << "RAW_PAINT_OPS: " << raw_paint_ops_json->ToJSONString().Utf8();
++
+   // Any new paint operation will crash on nullptr.
+   new_paint_artifact_ = nullptr;
+   if (persistent_data_) {
