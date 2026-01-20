@@ -223,6 +223,8 @@ let typeface = null;
 let opentypeFont = null;
 let surface = null;
 let selectedTest = null;
+let textPainterModule = null;  // WASM module
+let paintTextFn = null;        // WASM paint_text function
 
 // Debug data storage
 let debugData = {
@@ -473,8 +475,8 @@ function generateInputJson(glyphData, boxX, boxY) {
     box: {
       x: boxX,
       y: boxY,
-      width: fm.width + 20,
-      height: fm.ascent + fm.descent + 10
+      width: fm.width,  // Use actual text width for decorations
+      height: fm.ascent + fm.descent
     },
     style: {
       fill_color: glyphData.style.fill_color,
@@ -499,22 +501,49 @@ function generateInputJson(glyphData, boxX, boxY) {
     input.decorations = glyphData.decorations;
   }
 
-  // Add shadows if present
-  if (glyphData.shadows) {
-    input.style.shadows = glyphData.shadows;
+  // Add shadows if present (WASM expects "shadow" not "shadows", and hex color)
+  if (glyphData.shadows && glyphData.shadows.length > 0) {
+    input.style.shadow = glyphData.shadows.map(s => ({
+      offset_x: s.offset_x,
+      offset_y: s.offset_y,
+      blur: s.blur,
+      // Convert {r,g,b,a} to hex string #AARRGGBB
+      color: `#${s.color.a.toString(16).padStart(2, '0')}${s.color.r.toString(16).padStart(2, '0')}${s.color.g.toString(16).padStart(2, '0')}${s.color.b.toString(16).padStart(2, '0')}`
+    }));
   }
 
   return input;
 }
 
 // ============================================
-// Paint Ops Simulation (since WASM not built yet)
+// WASM Text Painter Integration
 // ============================================
 
-function simulatePaintOps(inputJson) {
-  // This simulates what text_painter would output
-  // In production, this would call the WASM module
+async function callTextPainterWasm(inputJson) {
+  if (!paintTextFn) {
+    console.warn('WASM not loaded, using fallback simulation');
+    return simulatePaintOps(inputJson);
+  }
 
+  try {
+    const inputStr = JSON.stringify(inputJson);
+    const resultStr = paintTextFn(inputStr);
+    const result = JSON.parse(resultStr);
+
+    if (result.error) {
+      console.error('WASM error:', result.error);
+      return simulatePaintOps(inputJson);
+    }
+
+    return result;
+  } catch (e) {
+    console.error('WASM call failed:', e);
+    return simulatePaintOps(inputJson);
+  }
+}
+
+// Fallback simulation when WASM is not available
+function simulatePaintOps(inputJson) {
   const ops = [];
   const fm = inputJson.fragment.shape_result.runs[0].font;
   const box = inputJson.box;
@@ -532,6 +561,29 @@ function simulatePaintOps(inputJson) {
       if (deco.line === 'underline' || deco.line === 'overline') {
         ops.push(createDecorationOp(deco, box, fm, inputJson.state_ids));
       }
+    }
+  }
+
+  // Add shadow ops if shadows are present
+  const shadows = inputJson.style.shadows;
+  if (shadows && shadows.length > 0) {
+    // Add shadows in reverse order (bottom-most first)
+    for (let i = shadows.length - 1; i >= 0; i--) {
+      const shadow = shadows[i];
+      // Convert blur radius to sigma (Chromium uses sigma = blur / 2)
+      const blurSigma = (shadow.blur || 0) / 2;
+      // Convert color to hex
+      const shadowColor = shadow.color ?
+        `#${shadow.color.a.toString(16).padStart(2, '0')}${shadow.color.r.toString(16).padStart(2, '0')}${shadow.color.g.toString(16).padStart(2, '0')}${shadow.color.b.toString(16).padStart(2, '0')}` :
+        '#80000000';
+
+      ops.push({
+        type: 'DrawShadowOp',
+        offsetX: shadow.offset_x || 0,
+        offsetY: shadow.offset_y || 0,
+        blurSigma: blurSigma,
+        color: shadowColor
+      });
     }
   }
 
@@ -566,6 +618,11 @@ function simulatePaintOps(inputJson) {
     effect_id: inputJson.state_ids.effect_id
   });
 
+  // Clear shadow state after text
+  if (shadows && shadows.length > 0) {
+    ops.push({ type: 'ClearShadowOp' });
+  }
+
   // Add line-through after text
   if (inputJson.decorations) {
     for (const deco of inputJson.decorations) {
@@ -586,13 +643,16 @@ function createDecorationOp(deco, box, fm, stateIds) {
   let y;
   switch (deco.line) {
     case 'underline':
-      y = box.y + fm.ascent + fm.descent * 0.5;
+      // Browser underline position is typically just below the baseline
+      // The baseline is at box.y + fm.ascent, underline is ~1-2px below
+      y = box.y + fm.ascent + 1;
       break;
     case 'overline':
       y = box.y;
       break;
     case 'line-through':
-      y = box.y + fm.ascent * 0.65;
+      // Strikethrough is at approximately x-height (roughly 50% of ascent for most fonts)
+      y = box.y + fm.ascent * 0.5;
       break;
     default:
       y = box.y + fm.ascent;
@@ -621,12 +681,15 @@ function createDecorationOp(deco, box, fm, stateIds) {
 
 function createWavyDecorationOp(x, y, width, thickness, color, stateIds) {
   // Create SVG path for wavy line
-  const wavelength = 4;
-  const amplitude = 2;
+  // Browser wavy underlines typically have wavelength ~8px and amplitude ~2-3px
+  const wavelength = 8;
+  const amplitude = 3;
   let path = `M ${x} ${y}`;
 
+  // Draw smooth sine-like wave using quadratic bezier curves
   for (let px = 0; px < width; px += wavelength / 2) {
-    const offset = (Math.floor(px / (wavelength / 2)) % 2 === 0) ? amplitude : -amplitude;
+    const isUp = (Math.floor(px / (wavelength / 2)) % 2 === 0);
+    const offset = isUp ? -amplitude : amplitude;
     path += ` Q ${x + px + wavelength / 4} ${y + offset} ${x + px + wavelength / 2} ${y}`;
   }
 
@@ -668,6 +731,8 @@ function parseHexColor(hex) {
 class PaintOpRenderer {
   constructor(canvasKit) {
     this.ck = canvasKit;
+    // Shadow state (set by DrawShadowOp, cleared by ClearShadowOp)
+    this.activeShadow = null;
   }
 
   renderOp(canvas, op) {
@@ -683,7 +748,37 @@ class PaintOpRenderer {
       case 'DrawPathOp':
         this.drawPath(canvas, op);
         break;
+      case 'DrawDecorationLineOp':
+        this.drawDecorationLine(canvas, op);
+        break;
+      case 'DrawWavyLineOp':
+        this.drawWavyLine(canvas, op);
+        break;
+      case 'DrawLineOp':
+        this.drawLine(canvas, op);
+        break;
+      case 'DrawShadowOp':
+        this.setShadow(op);
+        break;
+      case 'ClearShadowOp':
+        this.clearShadow();
+        break;
     }
+  }
+
+  // Set active shadow state
+  setShadow(op) {
+    this.activeShadow = {
+      offsetX: op.offsetX || 0,
+      offsetY: op.offsetY || 0,
+      blurSigma: op.blurSigma || 0,
+      color: this.parseHexColor(op.color)
+    };
+  }
+
+  // Clear active shadow state
+  clearShadow() {
+    this.activeShadow = null;
   }
 
   drawRect(canvas, op) {
@@ -743,21 +838,180 @@ class PaintOpRenderer {
     path.delete();
   }
 
+  // Draw decoration line (underline, overline, line-through)
+  // Format from WASM: { type, x, y, width, thickness, lineType, style, color, transform_id, clip_id, effect_id }
+  drawDecorationLine(canvas, op) {
+    const paint = new this.ck.Paint();
+    paint.setAntiAlias(true);
+
+    // Parse color from hex string (format: #AARRGGBB)
+    const color = this.parseHexColor(op.color);
+    paint.setColor(this.ck.Color4f(color.r, color.g, color.b, color.a));
+
+    const x = op.x || 0;
+    const y = op.y || 0;
+    const width = op.width || 0;
+    const thickness = op.thickness || 1;
+    const style = op.style || 0;  // 0=solid, 1=double, 2=dotted, 3=dashed, 4=wavy
+
+    // For solid, double styles - draw filled rect
+    if (style === 0 || style === 1) {
+      paint.setStyle(this.ck.PaintStyle.Fill);
+      const rect = this.ck.LTRBRect(x, y, x + width, y + thickness);
+      canvas.drawRect(rect, paint);
+
+      // Double line: draw second line below
+      if (style === 1) {
+        const gap = thickness;
+        const rect2 = this.ck.LTRBRect(x, y + thickness + gap, x + width, y + thickness * 2 + gap);
+        canvas.drawRect(rect2, paint);
+      }
+    }
+    // Dotted style
+    else if (style === 2) {
+      paint.setStyle(this.ck.PaintStyle.Stroke);
+      paint.setStrokeWidth(thickness);
+      const dashPath = new this.ck.Path();
+      dashPath.moveTo(x, y + thickness / 2);
+      dashPath.lineTo(x + width, y + thickness / 2);
+      // Apply dotted effect
+      const dotSpacing = thickness * 2;
+      const dashEffect = this.ck.PathEffect.MakeDash([thickness, dotSpacing], 0);
+      paint.setPathEffect(dashEffect);
+      canvas.drawPath(dashPath, paint);
+      dashPath.delete();
+      if (dashEffect) dashEffect.delete();
+    }
+    // Dashed style
+    else if (style === 3) {
+      paint.setStyle(this.ck.PaintStyle.Stroke);
+      paint.setStrokeWidth(thickness);
+      const dashPath = new this.ck.Path();
+      dashPath.moveTo(x, y + thickness / 2);
+      dashPath.lineTo(x + width, y + thickness / 2);
+      // Apply dashed effect
+      const dashLength = thickness * 3;
+      const gapLength = thickness * 2;
+      const dashEffect = this.ck.PathEffect.MakeDash([dashLength, gapLength], 0);
+      paint.setPathEffect(dashEffect);
+      canvas.drawPath(dashPath, paint);
+      dashPath.delete();
+      if (dashEffect) dashEffect.delete();
+    }
+    // Wavy style is handled by DrawWavyLineOp
+
+    paint.delete();
+  }
+
+  // Draw wavy line (for wavy underlines)
+  drawWavyLine(canvas, op) {
+    const paint = new this.ck.Paint();
+    paint.setAntiAlias(true);
+    paint.setStyle(this.ck.PaintStyle.Stroke);
+    paint.setStrokeWidth(op.strokeThickness || 1.5);  // Slightly thicker for visibility
+    paint.setStrokeCap(this.ck.StrokeCap.Round);
+
+    // Parse color from hex string
+    const color = this.parseHexColor(op.color);
+    paint.setColor(this.ck.Color4f(color.r, color.g, color.b, color.a));
+
+    const paintRect = op.paintRect || { x: 0, y: 0, width: 100, height: 10 };
+
+    // Browser wavy underlines - match CSS text-decoration-style: wavy
+    // Chrome/Safari use approximately these values for 16px font
+    const wavelength = 12;  // Larger wavelength for bigger waves
+    const amplitude = 2.5;  // Wave height from center
+
+    // Build the wavy path across the full width
+    const path = new this.ck.Path();
+    const startX = 0;
+    const centerY = amplitude + 1;  // Center line with padding
+
+    path.moveTo(startX, centerY);
+
+    // Draw smooth sine-like wave using quadratic beziers
+    let x = startX;
+    const halfWave = wavelength / 2;
+
+    while (x < paintRect.width + wavelength) {
+      // Each half-wavelength: go to peak or trough
+      const endX = x + halfWave;
+      const midX = x + halfWave / 2;
+
+      // Alternate between top and bottom of wave
+      const isEven = Math.floor(x / halfWave) % 2 === 0;
+      const peakY = isEven ? (centerY - amplitude) : (centerY + amplitude);
+
+      path.quadTo(midX, peakY, endX, centerY);
+      x = endX;
+    }
+
+    // Translate to paint position and draw
+    canvas.save();
+    canvas.translate(paintRect.x || 0, paintRect.y || 0);
+    canvas.drawPath(path, paint);
+    canvas.restore();
+
+    path.delete();
+    paint.delete();
+  }
+
+  // Draw simple line
+  drawLine(canvas, op) {
+    if (!op.rect) return;
+
+    const paint = new this.ck.Paint();
+    paint.setAntiAlias(true);
+    paint.setStyle(this.ck.PaintStyle.Fill);
+
+    const color = this.parseHexColor(op.color);
+    paint.setColor(this.ck.Color4f(color.r, color.g, color.b, color.a));
+
+    const rect = this.ck.LTRBRect(
+      op.rect.x,
+      op.rect.y,
+      op.rect.x + op.rect.width,
+      op.rect.y + op.rect.height
+    );
+    canvas.drawRect(rect, paint);
+    paint.delete();
+  }
+
+  // Helper to parse hex color string
+  parseHexColor(hex) {
+    if (!hex || typeof hex !== 'string') {
+      return { r: 0, g: 0, b: 0, a: 1 };
+    }
+    // Format: #AARRGGBB
+    const match = hex.match(/^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i);
+    if (match) {
+      return {
+        r: parseInt(match[2], 16) / 255,
+        g: parseInt(match[3], 16) / 255,
+        b: parseInt(match[4], 16) / 255,
+        a: parseInt(match[1], 16) / 255
+      };
+    }
+    return { r: 0, g: 0, b: 0, a: 1 };
+  }
+
   drawTextBlob(canvas, op) {
     if (!op.runs || op.runs.length === 0) return;
 
     const paint = new this.ck.Paint();
     paint.setAntiAlias(true);
 
+    // Store the original text color
+    let textColor;
     if (op.flags) {
-      paint.setColor(this.ck.Color4f(
+      textColor = this.ck.Color4f(
         op.flags.r || 0,
         op.flags.g || 0,
         op.flags.b || 0,
         op.flags.a || 1
-      ));
+      );
     } else {
-      paint.setColor(this.ck.BLACK);
+      textColor = this.ck.BLACK;
     }
 
     for (const run of op.runs) {
@@ -767,9 +1021,12 @@ class PaintOpRenderer {
       const fontSize = fontInfo.size || 16;
 
       const font = new this.ck.Font(typeface, fontSize);
-      font.setHinting(this.ck.FontHinting.Normal);
+      font.setHinting(this.ck.FontHinting.Full);
       font.setSubpixel(true);
-      font.setEdging(this.ck.FontEdging.SubpixelAntiAlias);
+      // Use AntiAlias instead of SubpixelAntiAlias for WebGL (subpixel doesn't work in WebGL)
+      font.setEdging(this.ck.FontEdging.AntiAlias);
+      // Enable linear metrics for consistent positioning
+      font.setLinearMetrics(true);
 
       if (fontInfo.weight >= 600 || fontInfo.embolden) {
         font.setEmbolden(true);
@@ -782,13 +1039,27 @@ class PaintOpRenderer {
 
       const rsxforms = new Float32Array(run.glyphCount * 4);
 
+      // Constants for positioning mode
+      const POSITIONING_HORIZONTAL = 1;
+      const POSITIONING_FULL = 2;
+      const positioning = run.positioning !== undefined ? run.positioning : POSITIONING_FULL;
+
       if (run.positions) {
         for (let i = 0; i < run.glyphCount && i < run.positions.length; i++) {
           const pos = run.positions[i];
           rsxforms[i * 4] = 1.0;
           rsxforms[i * 4 + 1] = 0.0;
-          rsxforms[i * 4 + 2] = pos.x || 0;
-          rsxforms[i * 4 + 3] = pos.y || 0;
+
+          // Handle both horizontal (flat x values) and full (object {x,y}) positioning
+          if (positioning === POSITIONING_HORIZONTAL || typeof pos === 'number') {
+            // Horizontal positioning: positions[i] is just the x coordinate
+            rsxforms[i * 4 + 2] = pos || 0;
+            rsxforms[i * 4 + 3] = 0;
+          } else {
+            // Full positioning: positions[i] is {x, y}
+            rsxforms[i * 4 + 2] = pos.x || 0;
+            rsxforms[i * 4 + 3] = pos.y || 0;
+          }
         }
       }
 
@@ -796,6 +1067,36 @@ class PaintOpRenderer {
       if (blob) {
         const drawX = (op.x || 0) + (run.offsetX || 0);
         const drawY = (op.y || 0) + (run.offsetY || 0);
+
+        // If there's an active shadow, draw the shadow first
+        if (this.activeShadow) {
+          const shadowPaint = new this.ck.Paint();
+          shadowPaint.setAntiAlias(true);
+          const shadowColor = this.activeShadow.color;
+          shadowPaint.setColor(this.ck.Color4f(shadowColor.r, shadowColor.g, shadowColor.b, shadowColor.a));
+
+          // Apply blur filter if there's blur
+          if (this.activeShadow.blurSigma > 0) {
+            const blurFilter = this.ck.MaskFilter.MakeBlur(
+              this.ck.BlurStyle.Normal,
+              this.activeShadow.blurSigma,
+              true
+            );
+            shadowPaint.setMaskFilter(blurFilter);
+          }
+
+          // Draw shadow with offset
+          canvas.drawTextBlob(
+            blob,
+            drawX + this.activeShadow.offsetX,
+            drawY + this.activeShadow.offsetY,
+            shadowPaint
+          );
+          shadowPaint.delete();
+        }
+
+        // Draw the actual text
+        paint.setColor(textColor);
         canvas.drawTextBlob(blob, drawX, drawY, paint);
         blob.delete();
       }
@@ -852,7 +1153,7 @@ function selectTest(testId) {
   renderComparison();
 }
 
-function renderComparison() {
+async function renderComparison() {
   if (!selectedTest || !CanvasKit || !typeface || !opentypeFont) return;
 
   // Create DOM element for extraction
@@ -871,48 +1172,51 @@ function renderComparison() {
   domRender.appendChild(textEl);
 
   // Small delay to ensure rendering completes
-  requestAnimationFrame(() => {
-    // Extract glyph data
-    const glyphData = getGlyphDataFromDOM(textEl);
-    debugData.glyphData = glyphData;
+  await new Promise(resolve => requestAnimationFrame(resolve));
 
-    // Generate input JSON
-    const inputJson = generateInputJson(glyphData, 10, 30);
-    debugData.inputJson = inputJson;
+  // Extract glyph data
+  const glyphData = getGlyphDataFromDOM(textEl);
+  debugData.glyphData = glyphData;
 
-    // Generate paint ops (simulated for now)
-    const paintOps = simulatePaintOps(inputJson);
-    debugData.paintOps = paintOps;
+  // Generate input JSON
+  const inputJson = generateInputJson(glyphData, 10, 30);
+  debugData.inputJson = inputJson;
 
-    // Render to canvas
-    const canvasEl = document.getElementById('canvas-render');
-    const fm = glyphData.fontMetrics;
-    canvasEl.width = Math.max(400, fm.width + 40);
-    canvasEl.height = Math.max(100, fm.ascent + fm.descent + 60);
+  // Generate paint ops using WASM (with fallback)
+  const paintOps = await callTextPainterWasm(inputJson);
+  debugData.paintOps = paintOps;
 
-    if (surface) {
-      surface.delete();
-    }
+  // Render to canvas
+  const canvasEl = document.getElementById('canvas-render');
+  const fm = glyphData.fontMetrics;
+  canvasEl.width = Math.max(400, fm.width + 40);
+  canvasEl.height = Math.max(100, fm.ascent + fm.descent + 60);
 
-    surface = CanvasKit.MakeCanvasSurface('canvas-render');
-    if (!surface) {
-      console.error('Failed to create surface');
-      return;
-    }
+  if (surface) {
+    surface.delete();
+  }
 
-    const canvas = surface.getCanvas();
-    canvas.clear(CanvasKit.WHITE);
+  surface = CanvasKit.MakeCanvasSurface('canvas-render');
+  if (!surface) {
+    console.error('Failed to create surface');
+    return;
+  }
 
-    const renderer = new PaintOpRenderer(CanvasKit);
-    for (const op of paintOps) {
-      renderer.renderOp(canvas, op);
-    }
+  const canvas = surface.getCanvas();
+  canvas.clear(CanvasKit.WHITE);
 
-    surface.flush();
+  const renderer = new PaintOpRenderer(CanvasKit);
 
-    // Update debug panel
-    updateDebugPanel();
-  });
+  // Handle both array format and object format from WASM
+  const opsArray = Array.isArray(paintOps) ? paintOps : (paintOps.ops || []);
+  for (const op of opsArray) {
+    renderer.renderOp(canvas, op);
+  }
+
+  surface.flush();
+
+  // Update debug panel
+  updateDebugPanel();
 }
 
 function updateDebugPanel() {
@@ -957,6 +1261,19 @@ async function init() {
       locateFile: (file) => `https://unpkg.com/canvaskit-wasm@0.39.1/bin/${file}`,
     });
 
+    statusEl.textContent = 'Loading text_painter WASM module...';
+
+    // Load text_painter WASM module
+    try {
+      const TextPainterModule = (await import('./text_painter.js')).default;
+      textPainterModule = await TextPainterModule();
+      paintTextFn = textPainterModule.cwrap('paint_text', 'string', ['string']);
+      console.log('WASM module loaded successfully');
+    } catch (e) {
+      console.warn('Could not load text_painter WASM, using fallback simulation:', e.message);
+      // Continue without WASM - will use fallback
+    }
+
     statusEl.textContent = 'Loading fonts...';
 
     // Load font for CanvasKit (try local first, then remote)
@@ -988,7 +1305,8 @@ async function init() {
       throw new Error('Failed to load font with opentype.js: ' + e.message);
     }
 
-    statusEl.textContent = 'Ready! Select a test case to compare rendering.';
+    const wasmStatus = paintTextFn ? '(WASM active)' : '(fallback mode)';
+    statusEl.textContent = `Ready! Select a test case to compare rendering. ${wasmStatus}`;
     statusEl.className = '';
 
     // Create test case elements

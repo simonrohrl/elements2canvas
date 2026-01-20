@@ -155,19 +155,25 @@ void TextDecorationInfo::SetUnderlineLineData() {
     return;
   }
 
-  // Compute underline offset
+  // Compute underline offset from the top of the box (local_origin_y)
+  // The baseline is at local_origin_y + ascent
+  // The underline should be just below the baseline
+  //
   // Priority:
   // 1. Font-supplied underline position (if available)
   // 2. CSS underline-offset adjustment
-  // 3. Default: descent (below baseline)
+  // 3. Default: just below baseline (ascent + small offset)
   float underline_offset;
+
+  // Start from the baseline position (ascent from top of box)
+  underline_offset = ascent_;
 
   if (font_underline_position_) {
     // Font provides underline position (distance from baseline, positive = below)
-    underline_offset = *font_underline_position_;
+    underline_offset += *font_underline_position_;
   } else {
-    // Default: position at descent
-    underline_offset = descent_;
+    // Default: position slightly below baseline (1px)
+    underline_offset += 1.0f;
   }
 
   // Add CSS text-underline-offset if specified
@@ -183,8 +189,9 @@ void TextDecorationInfo::SetOverlineLineData() {
     return;
   }
 
-  // Overline is at the top of the text (above the ascent)
-  float overline_offset = -ascent_;
+  // Overline is at the top of the text box
+  // Since local_origin_y is the top of the box, overline offset is 0
+  float overline_offset = 0.0f;
 
   SetLineData(TextDecorationLine::kOverline, overline_offset);
 }
@@ -194,11 +201,12 @@ void TextDecorationInfo::SetLineThroughLineData() {
     return;
   }
 
-  // Line-through is at 2/3 of ascent from baseline, minus half thickness
-  // to center it
-  const float line_through_offset = 2 * ascent_ / 3 - ResolvedThickness() / 2;
+  // Line-through is at approximately x-height (middle of lowercase letters)
+  // From top of box: ascent - (ascent * 0.5) = ascent * 0.5
+  // This puts it roughly at the middle of lowercase letters
+  const float line_through_offset = ascent_ * 0.5f;
 
-  SetLineData(TextDecorationLine::kLineThrough, -line_through_offset);
+  SetLineData(TextDecorationLine::kLineThrough, line_through_offset);
 }
 
 void TextDecorationInfo::SetSpellingOrGrammarErrorLineData() {

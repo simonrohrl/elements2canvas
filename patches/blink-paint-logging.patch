@@ -68,19 +68,44 @@ index 29dc5c26dd..95dd6333f7 100644
    bool IsOpaque() const;
  
    // Returns true if the shader looks like it is valid (ie the members required
+diff --git a/third_party/blink/renderer/core/paint/paint_layer.h b/third_party/blink/renderer/core/paint/paint_layer.h
+index 00357e6c40..88fe9317f9 100644
+--- a/third_party/blink/renderer/core/paint/paint_layer.h
++++ b/third_party/blink/renderer/core/paint/paint_layer.h
+@@ -815,6 +815,7 @@ class CORE_EXPORT PaintLayer : public GarbageCollected<PaintLayer>,
+   friend class PaintLayerPaintOrderIterator;
+   friend class PaintLayerPaintOrderReverseIterator;
+   friend class PaintLayerStackingNode;
++  friend class PaintLayerPainter;
+   friend class CheckAncestorPositionVisibilityScope;
+ 
+   FRIEND_TEST_ALL_PREFIXES(PaintLayerTest,
 diff --git a/third_party/blink/renderer/core/paint/paint_layer_painter.cc b/third_party/blink/renderer/core/paint/paint_layer_painter.cc
-index 317149bc68..f09bbfd7b4 100644
+index 317149bc68..03eb43bdf6 100644
 --- a/third_party/blink/renderer/core/paint/paint_layer_painter.cc
 +++ b/third_party/blink/renderer/core/paint/paint_layer_painter.cc
-@@ -6,6 +6,7 @@
+@@ -4,8 +4,12 @@
  
+ #include "third_party/blink/renderer/core/paint/paint_layer_painter.h"
+ 
++#include <cstdint>
++#include <functional>
  #include <optional>
++#include <unordered_map>
  
 +#include "base/logging.h"
  #include "cc/layers/view_transition_content_layer.h"
  #include "third_party/blink/renderer/core/frame/local_frame.h"
  #include "third_party/blink/renderer/core/frame/local_frame_view.h"
-@@ -37,8 +38,9 @@
+@@ -26,6 +30,7 @@
+ #include "third_party/blink/renderer/core/paint/paint_layer.h"
+ #include "third_party/blink/renderer/core/paint/paint_layer_paint_order_iterator.h"
+ #include "third_party/blink/renderer/core/paint/paint_layer_scrollable_area.h"
++#include "third_party/blink/renderer/core/paint/paint_layer_stacking_node.h"
+ #include "third_party/blink/renderer/core/paint/scrollable_area_painter.h"
+ #include "third_party/blink/renderer/core/paint/svg_mask_painter.h"
+ #include "third_party/blink/renderer/core/paint/timing/paint_timing_detector.h"
+@@ -37,8 +42,9 @@
  #include "third_party/blink/renderer/platform/graphics/paint/scoped_effectively_invisible.h"
  #include "third_party/blink/renderer/platform/graphics/paint/scoped_paint_chunk_properties.h"
  #include "third_party/blink/renderer/platform/graphics/paint/subsequence_recorder.h"
@@ -91,7 +116,7 @@ index 317149bc68..f09bbfd7b4 100644
  #include "ui/gfx/geometry/point3_f.h"
  
  namespace blink {
-@@ -141,28 +143,96 @@ scoped_refptr<cc::ViewTransitionContentLayer> GetTransitionScopeSnapshotLayer(
+@@ -141,28 +147,248 @@ scoped_refptr<cc::ViewTransitionContentLayer> GetTransitionScopeSnapshotLayer(
    return nullptr;
  }
  
@@ -117,9 +142,15 @@ index 317149bc68..f09bbfd7b4 100644
 +  return name.ToString();
 +}
 +
-+// Serialize a single LayoutObject to JSON
-+std::unique_ptr<JSONObject> SerializeLayoutObject(const LayoutObject& object) {
++// Global counters for generating unique IDs during a single logging pass
++static int g_layout_object_id_counter = 0;
++static int g_paint_layer_id_counter = 0;
++
++// Serialize a single LayoutObject to JSON with a unique ID
++std::unique_ptr<JSONObject> SerializeLayoutObject(const LayoutObject& object,
++                                                   int id) {
 +  auto json = std::make_unique<JSONObject>();
++  json->SetInteger("id", id);
 +  json->SetString("name", GetLayoutObjectDebugName(object));
 +  json->SetInteger("z_index", object.StyleRef().EffectiveZIndex());
 +  json->SetBoolean("is_stacking_context", object.IsStackingContext());
@@ -135,18 +166,40 @@ index 317149bc68..f09bbfd7b4 100644
 +  return json;
 +}
 +
-+// Log the LAYOUT TREE structure recursively (DOM order)
-+void LogLayoutTree(const LayoutObject& object,
-+                   JSONArray* objects_array,
-+                   int depth = 0) {
-+  auto obj_json = SerializeLayoutObject(object);
++// First pass: Assign unique IDs to all LayoutObjects
++// Using uintptr_t keys to avoid blink-gc plugin restrictions
++void AssignLayoutObjectIds(
++    const LayoutObject& object,
++    std::unordered_map<uintptr_t, int>& object_to_id) {
++  int my_id = g_layout_object_id_counter++;
++  object_to_id[reinterpret_cast<uintptr_t>(&object)] = my_id;
++
++  for (LayoutObject* child = object.SlowFirstChild(); child;
++       child = child->NextSibling()) {
++    AssignLayoutObjectIds(*child, object_to_id);
++  }
++}
++
++// Second pass: Log the LAYOUT TREE structure recursively (DOM order)
++void LogLayoutTree(
++    const LayoutObject& object,
++    JSONArray* objects_array,
++    const std::unordered_map<uintptr_t, int>& object_to_id,
++    int depth = 0) {
++  auto it = object_to_id.find(reinterpret_cast<uintptr_t>(&object));
++  int my_id = (it != object_to_id.end()) ? it->second : -1;
++
++  auto obj_json = SerializeLayoutObject(object, my_id);
 +  obj_json->SetInteger("depth", depth);
 +
-+  // Add children names in DOM order
++  // Add children IDs in DOM order
 +  auto children_array = std::make_unique<JSONArray>();
 +  for (LayoutObject* child = object.SlowFirstChild(); child;
 +       child = child->NextSibling()) {
-+    children_array->PushString(GetLayoutObjectDebugName(*child));
++    auto child_it = object_to_id.find(reinterpret_cast<uintptr_t>(child));
++    if (child_it != object_to_id.end()) {
++      children_array->PushInteger(child_it->second);
++    }
 +  }
 +  obj_json->SetArray("children", std::move(children_array));
 +
@@ -155,8 +208,132 @@ index 317149bc68..f09bbfd7b4 100644
 +  // Recurse to children in DOM order
 +  for (LayoutObject* child = object.SlowFirstChild(); child;
 +       child = child->NextSibling()) {
-+    LogLayoutTree(*child, objects_array, depth + 1);
++    LogLayoutTree(*child, objects_array, object_to_id, depth + 1);
 +  }
++}
++
++// First pass: Assign unique IDs to all PaintLayers
++// Using uintptr_t keys to avoid blink-gc plugin restrictions
++void AssignPaintLayerIds(
++    const PaintLayer& layer,
++    std::unordered_map<uintptr_t, int>& layer_to_id) {
++  int my_id = g_paint_layer_id_counter++;
++  layer_to_id[reinterpret_cast<uintptr_t>(&layer)] = my_id;
++
++  for (PaintLayer* child = layer.FirstChild(); child;
++       child = child->NextSibling()) {
++    AssignPaintLayerIds(*child, layer_to_id);
++  }
++}
++
++// Serialize a single PaintLayer to JSON with unique ID
++std::unique_ptr<JSONObject> SerializePaintLayer(
++    const PaintLayer& layer,
++    int id,
++    const std::unordered_map<uintptr_t, int>& layer_to_id) {
++  auto json = std::make_unique<JSONObject>();
++  json->SetInteger("id", id);
++  json->SetString("name", GetLayoutObjectDebugName(layer.GetLayoutObject()));
++  json->SetInteger("z_index",
++                   layer.GetLayoutObject().StyleRef().EffectiveZIndex());
++  json->SetBoolean("is_stacking_context",
++                   layer.GetLayoutObject().IsStackingContext());
++  json->SetBoolean("is_stacked", layer.GetLayoutObject().IsStacked());
++  json->SetBoolean("is_self_painting", layer.IsSelfPaintingLayer());
++
++  // Add parent ID
++  if (layer.Parent()) {
++    auto parent_it = layer_to_id.find(reinterpret_cast<uintptr_t>(layer.Parent()));
++    if (parent_it != layer_to_id.end()) {
++      json->SetInteger("parent_id", parent_it->second);
++    }
++  }
++
++  // Add children IDs in paint layer tree order
++  auto children_array = std::make_unique<JSONArray>();
++  for (PaintLayer* child = layer.FirstChild(); child;
++       child = child->NextSibling()) {
++    auto child_it = layer_to_id.find(reinterpret_cast<uintptr_t>(child));
++    if (child_it != layer_to_id.end()) {
++      children_array->PushInteger(child_it->second);
++    }
++  }
++  json->SetArray("children", std::move(children_array));
++
++  return json;
++}
++
++// Second pass: Log the PaintLayer tree structure recursively
++void LogPaintLayerTree(
++    const PaintLayer& layer,
++    JSONArray* layers_array,
++    const std::unordered_map<uintptr_t, int>& layer_to_id,
++    int depth = 0) {
++  auto it = layer_to_id.find(reinterpret_cast<uintptr_t>(&layer));
++  int my_id = (it != layer_to_id.end()) ? it->second : -1;
++
++  auto layer_json = SerializePaintLayer(layer, my_id, layer_to_id);
++  layer_json->SetInteger("depth", depth);
++  layers_array->PushObject(std::move(layer_json));
++
++  // Recurse to children in paint layer tree order
++  for (PaintLayer* child = layer.FirstChild(); child;
++       child = child->NextSibling()) {
++    LogPaintLayerTree(*child, layers_array, layer_to_id, depth + 1);
++  }
++}
++
++// Serialize a PaintLayerStackingNode to JSON - shows pos/neg z-order lists
++// Takes stacking_node directly since StackingNode() is private
++std::unique_ptr<JSONObject> SerializeStackingNode(
++    const PaintLayer& layer,
++    int layer_id,
++    PaintLayerStackingNode* stacking_node,
++    const std::unordered_map<uintptr_t, int>& layer_to_id) {
++  auto json = std::make_unique<JSONObject>();
++  json->SetInteger("layer_id", layer_id);
++  json->SetString("layer", GetLayoutObjectDebugName(layer.GetLayoutObject()));
++
++  if (!stacking_node) {
++    json->SetBoolean("has_stacking_node", false);
++    return json;
++  }
++
++  json->SetBoolean("has_stacking_node", true);
++
++  // Serialize negative z-order list with IDs
++  auto neg_list = std::make_unique<JSONArray>();
++  for (const auto& child : stacking_node->NegZOrderList()) {
++    auto child_json = std::make_unique<JSONObject>();
++    auto child_it = layer_to_id.find(reinterpret_cast<uintptr_t>(child.Get()));
++    if (child_it != layer_to_id.end()) {
++      child_json->SetInteger("id", child_it->second);
++    }
++    child_json->SetString("name",
++                          GetLayoutObjectDebugName(child->GetLayoutObject()));
++    child_json->SetInteger(
++        "z_index", child->GetLayoutObject().StyleRef().EffectiveZIndex());
++    neg_list->PushObject(std::move(child_json));
++  }
++  json->SetArray("neg_z_order_list", std::move(neg_list));
++
++  // Serialize positive z-order list with IDs
++  auto pos_list = std::make_unique<JSONArray>();
++  for (const auto& child : stacking_node->PosZOrderList()) {
++    auto child_json = std::make_unique<JSONObject>();
++    auto child_it = layer_to_id.find(reinterpret_cast<uintptr_t>(child.Get()));
++    if (child_it != layer_to_id.end()) {
++      child_json->SetInteger("id", child_it->second);
++    }
++    child_json->SetString("name",
++                          GetLayoutObjectDebugName(child->GetLayoutObject()));
++    child_json->SetInteger(
++        "z_index", child->GetLayoutObject().StyleRef().EffectiveZIndex());
++    pos_list->PushObject(std::move(child_json));
++  }
++  json->SetArray("pos_z_order_list", std::move(pos_list));
++
++  return json;
 +}
 +
  }  // namespace
@@ -192,7 +369,7 @@ index 317149bc68..f09bbfd7b4 100644
  
    return false;
  }
-@@ -200,19 +270,25 @@ static bool ShouldCreateSubsequence(const PaintLayer& paint_layer,
+@@ -200,19 +426,25 @@ static bool ShouldCreateSubsequence(const PaintLayer& paint_layer,
                                      const GraphicsContext& context,
                                      PaintFlags paint_flags) {
    // Caching is not needed during printing or painting previews.
@@ -222,7 +399,7 @@ index 317149bc68..f09bbfd7b4 100644
  
    // Create subsequence if the layer will create a paint chunk because of
    // different properties.
-@@ -272,8 +348,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
+@@ -272,8 +504,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
      return kFullyPainted;
    }
  
@@ -233,7 +410,7 @@ index 317149bc68..f09bbfd7b4 100644
  
    if (object.IsFragmentLessBox()) {
      return kFullyPainted;
-@@ -282,8 +359,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
+@@ -282,8 +515,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
    // Non self-painting layers without self-painting descendants don't need to be
    // painted as their layoutObject() should properly paint itself.
    if (!paint_layer_.IsSelfPaintingLayer() &&
@@ -244,17 +421,63 @@ index 317149bc68..f09bbfd7b4 100644
  
    std::optional<CheckAncestorPositionVisibilityScope>
        check_position_visibility_scope;
-@@ -304,10 +382,20 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
+@@ -304,10 +538,66 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
      return kMayBeClippedByCullRect;
    }
  
 +  // Log the full LAYOUT TREE structure at the root (DOM order)
 +  if (IsA<LayoutView>(object)) {
++    // Reset ID counters for this logging pass
++    g_layout_object_id_counter = 0;
++    g_paint_layer_id_counter = 0;
++
++    // First pass: assign IDs to all LayoutObjects
++    std::unordered_map<uintptr_t, int> object_to_id;
++    AssignLayoutObjectIds(object, object_to_id);
++
++    // Second pass: log layout tree with IDs
 +    auto tree_json = std::make_unique<JSONObject>();
 +    auto layout_tree_array = std::make_unique<JSONArray>();
-+    LogLayoutTree(object, layout_tree_array.get());
++    LogLayoutTree(object, layout_tree_array.get(), object_to_id);
 +    tree_json->SetArray("layout_tree", std::move(layout_tree_array));
 +    LOG(ERROR) << "LAYOUT_TREE: " << tree_json->ToJSONString().Utf8();
++
++    // First pass: assign IDs to all PaintLayers
++    std::unordered_map<uintptr_t, int> layer_to_id;
++    AssignPaintLayerIds(paint_layer_, layer_to_id);
++
++    // Second pass: log PaintLayer tree with IDs
++    auto layer_tree_json = std::make_unique<JSONObject>();
++    auto layer_tree_array = std::make_unique<JSONArray>();
++    LogPaintLayerTree(paint_layer_, layer_tree_array.get(), layer_to_id);
++    layer_tree_json->SetArray("layer_tree", std::move(layer_tree_array));
++    LOG(ERROR) << "LAYER_TREE: " << layer_tree_json->ToJSONString().Utf8();
++
++    // Log all stacking nodes (z-order lists) for paint order info
++    // We collect inline here since we have friend access to StackingNode()
++    auto paint_order_json = std::make_unique<JSONObject>();
++    auto stacking_nodes_array = std::make_unique<JSONArray>();
++
++    // Use a lambda to recursively collect stacking nodes
++    std::function<void(const PaintLayer&)> collect_stacking_nodes =
++        [&](const PaintLayer& layer) {
++          PaintLayerStackingNode* stacking_node = layer.StackingNode();
++          if (stacking_node) {
++            auto it = layer_to_id.find(reinterpret_cast<uintptr_t>(&layer));
++            int layer_id = (it != layer_to_id.end()) ? it->second : -1;
++            stacking_nodes_array->PushObject(
++                SerializeStackingNode(layer, layer_id, stacking_node,
++                                      layer_to_id));
++          }
++          for (PaintLayer* child = layer.FirstChild(); child;
++               child = child->NextSibling()) {
++            collect_stacking_nodes(*child);
++          }
++        };
++    collect_stacking_nodes(paint_layer_);
++
++    paint_order_json->SetArray("stacking_nodes", std::move(stacking_nodes_array));
++    LOG(ERROR) << "PAINT_ORDER: " << paint_order_json->ToJSONString().Utf8();
 +  }
 +
    bool selection_drag_image_only =
@@ -266,7 +489,7 @@ index 317149bc68..f09bbfd7b4 100644
  
    IgnorePaintTimingScope ignore_paint_timing;
    if (object.StyleRef().Opacity() == 0.0f) {
-@@ -344,8 +432,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
+@@ -344,8 +634,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
      gfx::Rect visual_rect = FirstFragmentVisualRect(object);
      gfx::Rect cull_rect = object.FirstFragment().GetCullRect().Rect();
      bool cull_rect_intersects_self = cull_rect.Intersects(visual_rect);
@@ -277,7 +500,7 @@ index 317149bc68..f09bbfd7b4 100644
  
      bool cull_rect_intersects_contents = true;
      if (const auto* box = DynamicTo<LayoutBox>(object)) {
-@@ -355,8 +444,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
+@@ -355,8 +646,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
            object.FirstFragment().GetContentsCullRect().Rect());
        cull_rect_intersects_contents =
            contents_cull_rect.Intersects(contents_visual_rect);
@@ -288,7 +511,7 @@ index 317149bc68..f09bbfd7b4 100644
      } else {
        cull_rect_intersects_contents = cull_rect_intersects_self;
      }
-@@ -391,8 +481,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
+@@ -391,8 +683,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
    PaintController& controller = context.GetPaintController();
  
    std::optional<ScopedEffectivelyInvisible> effectively_invisible;
@@ -299,7 +522,7 @@ index 317149bc68..f09bbfd7b4 100644
  
    std::optional<ScopedPaintChunkProperties> layer_chunk_properties;
  
-@@ -433,8 +524,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
+@@ -433,8 +726,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
    }
  
    if (PaintChildren(kNegativeZOrderChildren, context, paint_flags) ==
@@ -310,7 +533,7 @@ index 317149bc68..f09bbfd7b4 100644
  
    if (should_paint_content) {
      // If the negative-z-order children created paint chunks, this gives the
-@@ -455,18 +547,21 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
+@@ -455,18 +749,21 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
        is_self_painting_layer && object.StyleRef().HasOutline();
  
    bool is_video = IsA<LayoutVideo>(object);
@@ -335,7 +558,7 @@ index 317149bc68..f09bbfd7b4 100644
      // Otherwise the overlay overflow controls will be painted after scrolling
      // children in PaintChildren().
    }
-@@ -488,8 +583,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
+@@ -488,8 +785,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
            PaintWithPhase(PaintPhase::kMask, context, paint_flags);
          }
        }
@@ -346,7 +569,7 @@ index 317149bc68..f09bbfd7b4 100644
      }
      if (PaintTransitionPseudos(context, object, paint_flags) ==
          kMayBeClippedByCullRect) {
-@@ -564,8 +660,9 @@ PaintResult PaintLayerPainter::PaintChildren(
+@@ -564,8 +862,9 @@ PaintResult PaintLayerPainter::PaintChildren(
      GraphicsContext& context,
      PaintFlags paint_flags) {
    PaintResult result = kFullyPainted;
@@ -357,7 +580,7 @@ index 317149bc68..f09bbfd7b4 100644
  
    LayoutObject& layout_object = paint_layer_.GetLayoutObject();
    if (layout_object.ChildPaintBlockedByDisplayLock()) {
-@@ -579,8 +676,9 @@ PaintResult PaintLayerPainter::PaintChildren(
+@@ -579,8 +878,9 @@ PaintResult PaintLayerPainter::PaintChildren(
  
    PaintLayerPaintOrderIterator iterator(&paint_layer_, children_to_visit);
    while (PaintLayer* child = iterator.Next()) {
@@ -368,7 +591,7 @@ index 317149bc68..f09bbfd7b4 100644
  
      if (!layout_object.IsViewTransitionRoot() &&
          ViewTransitionUtils::IsViewTransitionRoot(child->GetLayoutObject())) {
-@@ -591,8 +689,9 @@ PaintResult PaintLayerPainter::PaintChildren(
+@@ -591,8 +891,9 @@ PaintResult PaintLayerPainter::PaintChildren(
      }
  
      if (PaintLayerPainter(*child).Paint(context, paint_flags) ==
@@ -379,7 +602,7 @@ index 317149bc68..f09bbfd7b4 100644
  
      if (const auto* layers_painting_overlay_overflow_controls_after =
              iterator.LayersPaintingOverlayOverflowControlsAfter(child)) {
-@@ -632,8 +731,9 @@ void PaintLayerPainter::PaintFragmentWithPhase(
+@@ -632,8 +933,9 @@ void PaintLayerPainter::PaintFragmentWithPhase(
           phase == PaintPhase::kOverlayOverflowControls);
  
    CullRect cull_rect = fragment_data.GetCullRect();
@@ -390,7 +613,7 @@ index 317149bc68..f09bbfd7b4 100644
  
    auto chunk_properties = fragment_data.LocalBorderBoxProperties();
    if (phase == PaintPhase::kMask) {
-@@ -691,14 +791,16 @@ void PaintLayerPainter::PaintWithPhase(PaintPhase phase,
+@@ -691,14 +993,16 @@ void PaintLayerPainter::PaintWithPhase(PaintPhase phase,
      }
  
      std::optional<ScopedDisplayItemFragment> scoped_display_item_fragment;
