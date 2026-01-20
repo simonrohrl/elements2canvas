@@ -81,7 +81,7 @@ index 00357e6c40..88fe9317f9 100644
  
    FRIEND_TEST_ALL_PREFIXES(PaintLayerTest,
 diff --git a/third_party/blink/renderer/core/paint/paint_layer_painter.cc b/third_party/blink/renderer/core/paint/paint_layer_painter.cc
-index 317149bc68..03eb43bdf6 100644
+index 317149bc68..25b8b1bfdd 100644
 --- a/third_party/blink/renderer/core/paint/paint_layer_painter.cc
 +++ b/third_party/blink/renderer/core/paint/paint_layer_painter.cc
 @@ -4,8 +4,12 @@
@@ -116,7 +116,7 @@ index 317149bc68..03eb43bdf6 100644
  #include "ui/gfx/geometry/point3_f.h"
  
  namespace blink {
-@@ -141,28 +147,248 @@ scoped_refptr<cc::ViewTransitionContentLayer> GetTransitionScopeSnapshotLayer(
+@@ -141,28 +147,331 @@ scoped_refptr<cc::ViewTransitionContentLayer> GetTransitionScopeSnapshotLayer(
    return nullptr;
  }
  
@@ -146,6 +146,80 @@ index 317149bc68..03eb43bdf6 100644
 +static int g_layout_object_id_counter = 0;
 +static int g_paint_layer_id_counter = 0;
 +
++// Serialize ComputedStyle to JSON
++std::unique_ptr<JSONObject> SerializeComputedStyle(const ComputedStyle& style) {
++  auto json = std::make_unique<JSONObject>();
++
++  // Position and display
++  json->SetString("display", style.Display() == EDisplay::kNone ? "none" :
++                             style.Display() == EDisplay::kBlock ? "block" :
++                             style.Display() == EDisplay::kInline ? "inline" :
++                             style.Display() == EDisplay::kInlineBlock ? "inline-block" :
++                             style.Display() == EDisplay::kFlex ? "flex" :
++                             style.Display() == EDisplay::kInlineFlex ? "inline-flex" :
++                             style.Display() == EDisplay::kGrid ? "grid" :
++                             style.Display() == EDisplay::kInlineGrid ? "inline-grid" :
++                             style.Display() == EDisplay::kContents ? "contents" :
++                             "other");
++  json->SetString("position", style.GetPosition() == EPosition::kStatic ? "static" :
++                              style.GetPosition() == EPosition::kRelative ? "relative" :
++                              style.GetPosition() == EPosition::kAbsolute ? "absolute" :
++                              style.GetPosition() == EPosition::kFixed ? "fixed" :
++                              style.GetPosition() == EPosition::kSticky ? "sticky" :
++                              "other");
++
++  // Visual properties
++  json->SetDouble("opacity", style.Opacity());
++  json->SetInteger("z_index", style.EffectiveZIndex());
++
++  // Transform
++  json->SetBoolean("has_transform", style.HasTransform());
++
++  // Overflow
++  json->SetString("overflow_x", style.OverflowX() == EOverflow::kVisible ? "visible" :
++                                style.OverflowX() == EOverflow::kHidden ? "hidden" :
++                                style.OverflowX() == EOverflow::kScroll ? "scroll" :
++                                style.OverflowX() == EOverflow::kAuto ? "auto" :
++                                style.OverflowX() == EOverflow::kClip ? "clip" :
++                                "other");
++  json->SetString("overflow_y", style.OverflowY() == EOverflow::kVisible ? "visible" :
++                                style.OverflowY() == EOverflow::kHidden ? "hidden" :
++                                style.OverflowY() == EOverflow::kScroll ? "scroll" :
++                                style.OverflowY() == EOverflow::kAuto ? "auto" :
++                                style.OverflowY() == EOverflow::kClip ? "clip" :
++                                "other");
++
++  // Visibility
++  json->SetString("visibility", style.Visibility() == EVisibility::kVisible ? "visible" :
++                                style.Visibility() == EVisibility::kHidden ? "hidden" :
++                                style.Visibility() == EVisibility::kCollapse ? "collapse" :
++                                "other");
++
++  // Filters and effects
++  json->SetBoolean("has_filter", style.HasFilter());
++  json->SetBoolean("has_backdrop_filter", style.HasNonInitialBackdropFilter());
++  json->SetBoolean("has_clip_path", style.HasClipPath());
++  json->SetBoolean("has_mask", style.HasMask());
++
++  // Blend mode
++  if (style.HasBlendMode()) {
++    json->SetBoolean("has_blend_mode", true);
++  }
++
++  // Isolation (check via Isolation() enum)
++  json->SetBoolean("is_isolated", style.Isolation() == EIsolation::kIsolate);
++
++  // Will-change
++  json->SetBoolean("has_will_change_transform", style.HasWillChangeTransformHint());
++  json->SetBoolean("has_will_change_opacity", style.HasWillChangeOpacityHint());
++
++  // Contain property
++  json->SetBoolean("contain_paint", style.ContainsPaint());
++  json->SetBoolean("contain_layout", style.ContainsLayout());
++
++  return json;
++}
++
 +// Serialize a single LayoutObject to JSON with a unique ID
 +std::unique_ptr<JSONObject> SerializeLayoutObject(const LayoutObject& object,
 +                                                   int id) {
@@ -157,11 +231,20 @@ index 317149bc68..03eb43bdf6 100644
 +  json->SetBoolean("is_stacked", object.IsStacked());
 +  json->SetBoolean("has_layer", object.HasLayer());
 +
++  // Add is_self_painting for objects with layers
++  if (object.HasLayer()) {
++    json->SetBoolean("is_self_painting",
++      To<LayoutBoxModelObject>(object).Layer()->IsSelfPaintingLayer());
++  }
++
 +  if (Node* node = object.GetNode()) {
 +    if (node->IsElementNode()) {
 +      json->SetString("tag", To<Element>(node)->TagQName().ToString());
 +    }
 +  }
++
++  // Add computed style information
++  json->SetObject("computed_style", SerializeComputedStyle(object.StyleRef()));
 +
 +  return json;
 +}
@@ -369,7 +452,7 @@ index 317149bc68..03eb43bdf6 100644
  
    return false;
  }
-@@ -200,19 +426,25 @@ static bool ShouldCreateSubsequence(const PaintLayer& paint_layer,
+@@ -200,19 +509,25 @@ static bool ShouldCreateSubsequence(const PaintLayer& paint_layer,
                                      const GraphicsContext& context,
                                      PaintFlags paint_flags) {
    // Caching is not needed during printing or painting previews.
@@ -399,7 +482,7 @@ index 317149bc68..03eb43bdf6 100644
  
    // Create subsequence if the layer will create a paint chunk because of
    // different properties.
-@@ -272,8 +504,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
+@@ -272,8 +587,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
      return kFullyPainted;
    }
  
@@ -410,7 +493,7 @@ index 317149bc68..03eb43bdf6 100644
  
    if (object.IsFragmentLessBox()) {
      return kFullyPainted;
-@@ -282,8 +515,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
+@@ -282,8 +598,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
    // Non self-painting layers without self-painting descendants don't need to be
    // painted as their layoutObject() should properly paint itself.
    if (!paint_layer_.IsSelfPaintingLayer() &&
@@ -421,7 +504,7 @@ index 317149bc68..03eb43bdf6 100644
  
    std::optional<CheckAncestorPositionVisibilityScope>
        check_position_visibility_scope;
-@@ -304,10 +538,66 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
+@@ -304,10 +621,66 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
      return kMayBeClippedByCullRect;
    }
  
@@ -489,7 +572,7 @@ index 317149bc68..03eb43bdf6 100644
  
    IgnorePaintTimingScope ignore_paint_timing;
    if (object.StyleRef().Opacity() == 0.0f) {
-@@ -344,8 +634,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
+@@ -344,8 +717,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
      gfx::Rect visual_rect = FirstFragmentVisualRect(object);
      gfx::Rect cull_rect = object.FirstFragment().GetCullRect().Rect();
      bool cull_rect_intersects_self = cull_rect.Intersects(visual_rect);
@@ -500,7 +583,7 @@ index 317149bc68..03eb43bdf6 100644
  
      bool cull_rect_intersects_contents = true;
      if (const auto* box = DynamicTo<LayoutBox>(object)) {
-@@ -355,8 +646,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
+@@ -355,8 +729,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
            object.FirstFragment().GetContentsCullRect().Rect());
        cull_rect_intersects_contents =
            contents_cull_rect.Intersects(contents_visual_rect);
@@ -511,7 +594,7 @@ index 317149bc68..03eb43bdf6 100644
      } else {
        cull_rect_intersects_contents = cull_rect_intersects_self;
      }
-@@ -391,8 +683,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
+@@ -391,8 +766,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
    PaintController& controller = context.GetPaintController();
  
    std::optional<ScopedEffectivelyInvisible> effectively_invisible;
@@ -522,7 +605,7 @@ index 317149bc68..03eb43bdf6 100644
  
    std::optional<ScopedPaintChunkProperties> layer_chunk_properties;
  
-@@ -433,8 +726,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
+@@ -433,8 +809,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
    }
  
    if (PaintChildren(kNegativeZOrderChildren, context, paint_flags) ==
@@ -533,7 +616,7 @@ index 317149bc68..03eb43bdf6 100644
  
    if (should_paint_content) {
      // If the negative-z-order children created paint chunks, this gives the
-@@ -455,18 +749,21 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
+@@ -455,18 +832,21 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
        is_self_painting_layer && object.StyleRef().HasOutline();
  
    bool is_video = IsA<LayoutVideo>(object);
@@ -558,7 +641,7 @@ index 317149bc68..03eb43bdf6 100644
      // Otherwise the overlay overflow controls will be painted after scrolling
      // children in PaintChildren().
    }
-@@ -488,8 +785,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
+@@ -488,8 +868,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
            PaintWithPhase(PaintPhase::kMask, context, paint_flags);
          }
        }
@@ -569,7 +652,7 @@ index 317149bc68..03eb43bdf6 100644
      }
      if (PaintTransitionPseudos(context, object, paint_flags) ==
          kMayBeClippedByCullRect) {
-@@ -564,8 +862,9 @@ PaintResult PaintLayerPainter::PaintChildren(
+@@ -564,8 +945,9 @@ PaintResult PaintLayerPainter::PaintChildren(
      GraphicsContext& context,
      PaintFlags paint_flags) {
    PaintResult result = kFullyPainted;
@@ -580,7 +663,7 @@ index 317149bc68..03eb43bdf6 100644
  
    LayoutObject& layout_object = paint_layer_.GetLayoutObject();
    if (layout_object.ChildPaintBlockedByDisplayLock()) {
-@@ -579,8 +878,9 @@ PaintResult PaintLayerPainter::PaintChildren(
+@@ -579,8 +961,9 @@ PaintResult PaintLayerPainter::PaintChildren(
  
    PaintLayerPaintOrderIterator iterator(&paint_layer_, children_to_visit);
    while (PaintLayer* child = iterator.Next()) {
@@ -591,7 +674,7 @@ index 317149bc68..03eb43bdf6 100644
  
      if (!layout_object.IsViewTransitionRoot() &&
          ViewTransitionUtils::IsViewTransitionRoot(child->GetLayoutObject())) {
-@@ -591,8 +891,9 @@ PaintResult PaintLayerPainter::PaintChildren(
+@@ -591,8 +974,9 @@ PaintResult PaintLayerPainter::PaintChildren(
      }
  
      if (PaintLayerPainter(*child).Paint(context, paint_flags) ==
@@ -602,7 +685,7 @@ index 317149bc68..03eb43bdf6 100644
  
      if (const auto* layers_painting_overlay_overflow_controls_after =
              iterator.LayersPaintingOverlayOverflowControlsAfter(child)) {
-@@ -632,8 +933,9 @@ void PaintLayerPainter::PaintFragmentWithPhase(
+@@ -632,8 +1016,9 @@ void PaintLayerPainter::PaintFragmentWithPhase(
           phase == PaintPhase::kOverlayOverflowControls);
  
    CullRect cull_rect = fragment_data.GetCullRect();
@@ -613,7 +696,7 @@ index 317149bc68..03eb43bdf6 100644
  
    auto chunk_properties = fragment_data.LocalBorderBoxProperties();
    if (phase == PaintPhase::kMask) {
-@@ -691,14 +993,16 @@ void PaintLayerPainter::PaintWithPhase(PaintPhase phase,
+@@ -691,14 +1076,16 @@ void PaintLayerPainter::PaintWithPhase(PaintPhase phase,
      }
  
      std::optional<ScopedDisplayItemFragment> scoped_display_item_fragment;

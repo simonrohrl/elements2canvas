@@ -127,54 +127,43 @@ function computeStackingNodes() {
     // Only create stacking node if stacking context has stacked descendants
     const needsStackingNode = hasStackedDescendant;
 
+    // Only output stacking contexts that have stacking nodes (matching stacking_nodes.json format)
     if (needsStackingNode) {
       const stackedDescendants = collectStackedDescendants(node);
 
       // Split into negative and positive z-index lists
+      // Use stable sort: sort by z_index, preserve tree order for equal z_index
       // (matches RebuildZOrderLists stable_sort by EffectiveZIndex)
       const negZOrderList = stackedDescendants
+        .map((d, i) => ({...d, _order: i}))  // Track insertion order for stable sort
         .filter(d => d.z_index < 0)
-        .sort((a, b) => a.z_index - b.z_index);
+        .sort((a, b) => a.z_index - b.z_index || a._order - b._order);
 
       const posZOrderList = stackedDescendants
+        .map((d, i) => ({...d, _order: i}))  // Track insertion order for stable sort
         .filter(d => d.z_index >= 0)
-        .sort((a, b) => a.z_index - b.z_index);
+        .sort((a, b) => a.z_index - b.z_index || a._order - b._order);
 
+      // Output format matches stacking_nodes.json exactly:
+      // - layer_id, layer, has_stacking_node
+      // - z-order list items: id, name, z_index (no is_stacking_context)
       stackingNodes.push({
-        id: node.id,
-        stacking_context: node.name,
-        layer_depth: node.layer_depth,
-        layout_depth: node.layout_depth,
-        z_index: node.z_index,
-        has_stacked_descendant: hasStackedDescendant,
-        needs_stacking_node: needsStackingNode,
+        layer_id: node.id,
+        layer: node.name,
+        has_stacking_node: true,
         neg_z_order_list: negZOrderList.map(n => ({
           id: n.id,
           name: n.name,
-          z_index: n.z_index,
-          is_stacking_context: n.is_stacking_context
+          z_index: n.z_index
         })),
         pos_z_order_list: posZOrderList.map(n => ({
           id: n.id,
           name: n.name,
-          z_index: n.z_index,
-          is_stacking_context: n.is_stacking_context
+          z_index: n.z_index
         }))
       });
-    } else {
-      // Stacking context without stacking node (no stacked descendants)
-      stackingNodes.push({
-        id: node.id,
-        stacking_context: node.name,
-        layer_depth: node.layer_depth,
-        layout_depth: node.layout_depth,
-        z_index: node.z_index,
-        has_stacked_descendant: false,
-        needs_stacking_node: false,
-        neg_z_order_list: [],
-        pos_z_order_list: []
-      });
     }
+    // Skip stacking contexts without stacking nodes (not in reference output)
   });
 
   return stackingNodes;
@@ -247,13 +236,8 @@ console.log('STACKING NODES COMPUTED FROM PAINT LAYER TREE');
 console.log('='.repeat(80));
 console.log();
 
-// Summary
-const withStackingNode = stackingNodes.filter(n => n.needs_stacking_node);
-const withoutStackingNode = stackingNodes.filter(n => !n.needs_stacking_node);
-
-console.log(`Total stacking contexts: ${stackingNodes.length}`);
-console.log(`With stacking node (has stacked descendants): ${withStackingNode.length}`);
-console.log(`Without stacking node (no stacked descendants): ${withoutStackingNode.length}`);
+// Summary - stackingNodes now only contains those with stacking nodes
+console.log(`Stacking contexts with stacking nodes: ${stackingNodes.length}`);
 console.log();
 
 // Detailed output for stacking contexts WITH stacking nodes
@@ -261,19 +245,16 @@ console.log('='.repeat(80));
 console.log('STACKING CONTEXTS WITH STACKING NODES');
 console.log('='.repeat(80));
 
-withStackingNode.forEach(sn => {
+stackingNodes.forEach(sn => {
   console.log();
-  console.log(`Stacking Context: [${sn.id}] ${sn.stacking_context}`);
-  console.log(`  Layer depth: ${sn.layer_depth}, Layout depth: ${sn.layout_depth}, z-index: ${sn.z_index}`);
+  console.log(`Stacking Context: [${sn.layer_id}] ${sn.layer}`);
   console.log(`  Negative z-order list (${sn.neg_z_order_list.length}):`);
   sn.neg_z_order_list.forEach(item => {
-    const marker = item.is_stacking_context ? ' [SC]' : '';
-    console.log(`    - [${item.id}] ${item.name} (z-index: ${item.z_index})${marker}`);
+    console.log(`    - [${item.id}] ${item.name} (z-index: ${item.z_index})`);
   });
   console.log(`  Positive z-order list (${sn.pos_z_order_list.length}):`);
   sn.pos_z_order_list.forEach(item => {
-    const marker = item.is_stacking_context ? ' [SC]' : '';
-    console.log(`    - [${item.id}] ${item.name} (z-index: ${item.z_index})${marker}`);
+    console.log(`    - [${item.id}] ${item.name} (z-index: ${item.z_index})`);
   });
 });
 
@@ -290,16 +271,13 @@ if (root) {
   paintOrder.forEach(line => console.log(line));
 }
 
-// Write JSON output
+// Write JSON output matching stacking_nodes.json format exactly
+// - No summary wrapper
+// - Only stacking contexts with has_stacking_node: true
 const outputPath = path.join(__dirname, 'computed_stacking_nodes.json');
 fs.writeFileSync(outputPath, JSON.stringify({
-  summary: {
-    total_stacking_contexts: stackingNodes.length,
-    with_stacking_node: withStackingNode.length,
-    without_stacking_node: withoutStackingNode.length
-  },
   stacking_nodes: stackingNodes
-}, null, 2));
+}, null, 3));
 
 console.log();
 console.log('='.repeat(80));

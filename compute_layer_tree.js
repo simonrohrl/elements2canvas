@@ -70,8 +70,7 @@ function buildLayerTree() {
         z_index: node.z_index,
         is_stacking_context: node.is_stacking_context,
         is_stacked: node.is_stacked,
-        tag: node.tag,
-        layout_depth: node.depth,
+        is_self_painting: node.is_self_painting,  // From Chromium logging
         children: [],
         // We'll compute layer_depth after building the tree
         layer_depth: 0
@@ -206,30 +205,33 @@ function printLayerTree(layerId, indent = 0) {
 const rootLayers = layerNodes.filter(n => n.parent_id === undefined);
 rootLayers.forEach(root => printLayerTree(root.id));
 
-// Write JSON output
+// Write JSON output matching layer_tree.json format exactly
 const outputPath = path.join(__dirname, 'computed_layer_tree.json');
+
+// Build output in exact format of layer_tree.json:
+// - No summary wrapper
+// - Fields: id, name, z_index, is_stacking_context, is_stacked, is_self_painting, parent_id (if not root), children, depth
 const output = {
-  summary: {
-    total_layout_objects: layoutTree.length,
-    total_layers: layerNodes.length,
-    stacking_context_layers: layerNodes.filter(n => n.is_stacking_context).length,
-    stacked_layers: layerNodes.filter(n => n.is_stacked).length
-  },
-  layer_tree: layerNodes.map(n => ({
-    id: n.id,
-    name: n.name,
-    z_index: n.z_index,
-    is_stacking_context: n.is_stacking_context,
-    is_stacked: n.is_stacked,
-    tag: n.tag,
-    layer_depth: n.layer_depth,
-    layout_depth: n.layout_depth,
-    parent_id: n.parent_id !== undefined ? n.parent_id : null,
-    children: n.children
-  }))
+  layer_tree: layerNodes.map(n => {
+    const entry = {
+      id: n.id,
+      name: n.name,
+      z_index: n.z_index,
+      is_stacking_context: n.is_stacking_context,
+      is_stacked: n.is_stacked,
+      is_self_painting: n.is_self_painting !== undefined ? n.is_self_painting : true
+    };
+    // parent_id only for non-root nodes (matches reference format)
+    if (n.parent_id !== undefined) {
+      entry.parent_id = n.parent_id;
+    }
+    entry.children = n.children;
+    entry.depth = n.layer_depth;
+    return entry;
+  })
 };
 
-fs.writeFileSync(outputPath, JSON.stringify(output, null, 2));
+fs.writeFileSync(outputPath, JSON.stringify(output, null, 3));
 
 console.log();
 console.log('='.repeat(80));
