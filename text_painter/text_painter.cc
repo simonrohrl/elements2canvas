@@ -304,14 +304,11 @@ PaintOpList TextPainter::Paint(const TextPaintInput& input) {
     }
   }
 
-  // === Paint shadows first if decorations are present ===
-  // (Chromium paints shadows before decorations when both are present)
+  // === Check for shadows and decorations ===
   bool has_shadows = effective_style.shadow && !effective_style.shadow->empty();
   bool has_decorations = !input.decorations.empty();
-
-  if (has_shadows && has_decorations) {
-    PaintShadows(ops, *effective_style.shadow);
-  }
+  // Note: Shadows for decorations are now handled by TextDecorationPainter internally
+  // via PaintWithTextShadow pattern, so we don't need to paint shadows separately here
 
   // === Get font metrics for decorations ===
   float font_size = 16.0f;
