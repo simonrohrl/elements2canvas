@@ -81,7 +81,7 @@ index 00357e6c40..88fe9317f9 100644
  
    FRIEND_TEST_ALL_PREFIXES(PaintLayerTest,
 diff --git a/third_party/blink/renderer/core/paint/paint_layer_painter.cc b/third_party/blink/renderer/core/paint/paint_layer_painter.cc
-index 317149bc68..25b8b1bfdd 100644
+index 317149bc68..22a04b3dc8 100644
 --- a/third_party/blink/renderer/core/paint/paint_layer_painter.cc
 +++ b/third_party/blink/renderer/core/paint/paint_layer_painter.cc
 @@ -4,8 +4,12 @@
@@ -105,7 +105,12 @@ index 317149bc68..25b8b1bfdd 100644
  #include "third_party/blink/renderer/core/paint/scrollable_area_painter.h"
  #include "third_party/blink/renderer/core/paint/svg_mask_painter.h"
  #include "third_party/blink/renderer/core/paint/timing/paint_timing_detector.h"
-@@ -37,8 +42,9 @@
+@@ -33,12 +38,14 @@
+ #include "third_party/blink/renderer/platform/graphics/paint/drawing_recorder.h"
+ #include "third_party/blink/renderer/platform/graphics/paint/foreign_layer_display_item.h"
+ #include "third_party/blink/renderer/platform/graphics/paint/geometry_mapper.h"
++#include "third_party/blink/renderer/platform/graphics/paint/property_tree_serializer.h"
+ #include "third_party/blink/renderer/platform/graphics/paint/scoped_display_item_fragment.h"
  #include "third_party/blink/renderer/platform/graphics/paint/scoped_effectively_invisible.h"
  #include "third_party/blink/renderer/platform/graphics/paint/scoped_paint_chunk_properties.h"
  #include "third_party/blink/renderer/platform/graphics/paint/subsequence_recorder.h"
@@ -116,7 +121,7 @@ index 317149bc68..25b8b1bfdd 100644
  #include "ui/gfx/geometry/point3_f.h"
  
  namespace blink {
-@@ -141,28 +147,331 @@ scoped_refptr<cc::ViewTransitionContentLayer> GetTransitionScopeSnapshotLayer(
+@@ -141,28 +148,331 @@ scoped_refptr<cc::ViewTransitionContentLayer> GetTransitionScopeSnapshotLayer(
    return nullptr;
  }
  
@@ -504,7 +509,7 @@ index 317149bc68..25b8b1bfdd 100644
  
    std::optional<CheckAncestorPositionVisibilityScope>
        check_position_visibility_scope;
-@@ -304,10 +621,66 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
+@@ -304,10 +621,103 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
      return kMayBeClippedByCullRect;
    }
  
@@ -561,6 +566,43 @@ index 317149bc68..25b8b1bfdd 100644
 +
 +    paint_order_json->SetArray("stacking_nodes", std::move(stacking_nodes_array));
 +    LOG(ERROR) << "PAINT_ORDER: " << paint_order_json->ToJSONString().Utf8();
++
++    // Log Property Trees
++    PropertyTreeIdMapper property_tree_mapper;
++    std::function<void(const LayoutObject&)> collect_property_tree_nodes =
++        [&](const LayoutObject& object) {
++          for (const FragmentData& fragment : FragmentDataIterator(object)) {
++            if (fragment.HasLocalBorderBoxProperties()) {
++              PropertyTreeStateOrAlias state =
++                  fragment.LocalBorderBoxProperties();
++              property_tree_mapper.GetOrAssignTransformId(
++                  &state.Transform().Unalias());
++              property_tree_mapper.GetOrAssignClipId(&state.Clip().Unalias());
++              property_tree_mapper.GetOrAssignEffectId(
++                  &state.Effect().Unalias());
++            }
++          }
++          for (const LayoutObject* child = object.SlowFirstChild(); child;
++               child = child->NextSibling()) {
++            collect_property_tree_nodes(*child);
++          }
++        };
++
++    // Retrieve LayoutView via the current paint_layer's LayoutObject
++    collect_property_tree_nodes(*paint_layer_.GetLayoutObject().View());
++
++    auto property_trees_json = std::make_unique<JSONObject>();
++    property_trees_json->SetObject(
++        "transform_tree",
++        SerializeTransformTree(property_tree_mapper.GetTransformIds()));
++    property_trees_json->SetObject(
++        "clip_tree", SerializeClipTree(property_tree_mapper.GetClipIds()));
++    property_trees_json->SetObject(
++        "effect_tree",
++        SerializeEffectTree(property_tree_mapper.GetEffectIds()));
++
++    LOG(ERROR) << "PROPERTY_TREES: "
++               << property_trees_json->ToJSONString().Utf8();
 +  }
 +
    bool selection_drag_image_only =
@@ -572,7 +614,7 @@ index 317149bc68..25b8b1bfdd 100644
  
    IgnorePaintTimingScope ignore_paint_timing;
    if (object.StyleRef().Opacity() == 0.0f) {
-@@ -344,8 +717,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
+@@ -344,8 +759,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
      gfx::Rect visual_rect = FirstFragmentVisualRect(object);
      gfx::Rect cull_rect = object.FirstFragment().GetCullRect().Rect();
      bool cull_rect_intersects_self = cull_rect.Intersects(visual_rect);
@@ -583,7 +625,7 @@ index 317149bc68..25b8b1bfdd 100644
  
      bool cull_rect_intersects_contents = true;
      if (const auto* box = DynamicTo<LayoutBox>(object)) {
-@@ -355,8 +729,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
+@@ -355,8 +771,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
            object.FirstFragment().GetContentsCullRect().Rect());
        cull_rect_intersects_contents =
            contents_cull_rect.Intersects(contents_visual_rect);
@@ -594,7 +636,7 @@ index 317149bc68..25b8b1bfdd 100644
      } else {
        cull_rect_intersects_contents = cull_rect_intersects_self;
      }
-@@ -391,8 +766,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
+@@ -391,8 +808,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
    PaintController& controller = context.GetPaintController();
  
    std::optional<ScopedEffectivelyInvisible> effectively_invisible;
@@ -605,7 +647,7 @@ index 317149bc68..25b8b1bfdd 100644
  
    std::optional<ScopedPaintChunkProperties> layer_chunk_properties;
  
-@@ -433,8 +809,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
+@@ -433,8 +851,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
    }
  
    if (PaintChildren(kNegativeZOrderChildren, context, paint_flags) ==
@@ -616,7 +658,7 @@ index 317149bc68..25b8b1bfdd 100644
  
    if (should_paint_content) {
      // If the negative-z-order children created paint chunks, this gives the
-@@ -455,18 +832,21 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
+@@ -455,18 +874,21 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
        is_self_painting_layer && object.StyleRef().HasOutline();
  
    bool is_video = IsA<LayoutVideo>(object);
@@ -641,7 +683,7 @@ index 317149bc68..25b8b1bfdd 100644
      // Otherwise the overlay overflow controls will be painted after scrolling
      // children in PaintChildren().
    }
-@@ -488,8 +868,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
+@@ -488,8 +910,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
            PaintWithPhase(PaintPhase::kMask, context, paint_flags);
          }
        }
@@ -652,7 +694,7 @@ index 317149bc68..25b8b1bfdd 100644
      }
      if (PaintTransitionPseudos(context, object, paint_flags) ==
          kMayBeClippedByCullRect) {
-@@ -564,8 +945,9 @@ PaintResult PaintLayerPainter::PaintChildren(
+@@ -564,8 +987,9 @@ PaintResult PaintLayerPainter::PaintChildren(
      GraphicsContext& context,
      PaintFlags paint_flags) {
    PaintResult result = kFullyPainted;
@@ -663,7 +705,7 @@ index 317149bc68..25b8b1bfdd 100644
  
    LayoutObject& layout_object = paint_layer_.GetLayoutObject();
    if (layout_object.ChildPaintBlockedByDisplayLock()) {
-@@ -579,8 +961,9 @@ PaintResult PaintLayerPainter::PaintChildren(
+@@ -579,8 +1003,9 @@ PaintResult PaintLayerPainter::PaintChildren(
  
    PaintLayerPaintOrderIterator iterator(&paint_layer_, children_to_visit);
    while (PaintLayer* child = iterator.Next()) {
@@ -674,7 +716,7 @@ index 317149bc68..25b8b1bfdd 100644
  
      if (!layout_object.IsViewTransitionRoot() &&
          ViewTransitionUtils::IsViewTransitionRoot(child->GetLayoutObject())) {
-@@ -591,8 +974,9 @@ PaintResult PaintLayerPainter::PaintChildren(
+@@ -591,8 +1016,9 @@ PaintResult PaintLayerPainter::PaintChildren(
      }
  
      if (PaintLayerPainter(*child).Paint(context, paint_flags) ==
@@ -685,7 +727,7 @@ index 317149bc68..25b8b1bfdd 100644
  
      if (const auto* layers_painting_overlay_overflow_controls_after =
              iterator.LayersPaintingOverlayOverflowControlsAfter(child)) {
-@@ -632,8 +1016,9 @@ void PaintLayerPainter::PaintFragmentWithPhase(
+@@ -632,8 +1058,9 @@ void PaintLayerPainter::PaintFragmentWithPhase(
           phase == PaintPhase::kOverlayOverflowControls);
  
    CullRect cull_rect = fragment_data.GetCullRect();
@@ -696,7 +738,7 @@ index 317149bc68..25b8b1bfdd 100644
  
    auto chunk_properties = fragment_data.LocalBorderBoxProperties();
    if (phase == PaintPhase::kMask) {
-@@ -691,14 +1076,16 @@ void PaintLayerPainter::PaintWithPhase(PaintPhase phase,
+@@ -691,14 +1118,16 @@ void PaintLayerPainter::PaintWithPhase(PaintPhase phase,
      }
  
      std::optional<ScopedDisplayItemFragment> scoped_display_item_fragment;
@@ -716,7 +758,7 @@ index 317149bc68..25b8b1bfdd 100644
      fragment_idx++;
    }
 diff --git a/third_party/blink/renderer/platform/BUILD.gn b/third_party/blink/renderer/platform/BUILD.gn
-index e2256766d7..414407b3a8 100644
+index e2256766d7..dd2bfae61d 100644
 --- a/third_party/blink/renderer/platform/BUILD.gn
 +++ b/third_party/blink/renderer/platform/BUILD.gn
 @@ -1154,6 +1154,8 @@ component("platform") {
@@ -728,6 +770,15 @@ index e2256766d7..414407b3a8 100644
      "graphics/paint/paint_chunk.h",
      "graphics/paint/paint_chunk_subset.cc",
      "graphics/paint/paint_chunk_subset.h",
+@@ -1173,6 +1175,8 @@ component("platform") {
+     "graphics/paint/paint_under_invalidation_checker.cc",
+     "graphics/paint/paint_under_invalidation_checker.h",
+     "graphics/paint/painted_selection_bound.h",
++    "graphics/paint/property_tree_serializer.cc",
++    "graphics/paint/property_tree_serializer.h",
+     "graphics/paint/property_tree_state.cc",
+     "graphics/paint/property_tree_state.h",
+     "graphics/paint/raster_invalidation_tracking.cc",
 diff --git a/third_party/blink/renderer/platform/fonts/shaping/text_blob_serializer.cc b/third_party/blink/renderer/platform/fonts/shaping/text_blob_serializer.cc
 new file mode 100644
 index 0000000000..36cbff9230
@@ -902,10 +953,10 @@ new file mode 100644
 index 0000000000..e69de29bb2
 diff --git a/third_party/blink/renderer/platform/graphics/paint/paint_artifact_serializer.cc b/third_party/blink/renderer/platform/graphics/paint/paint_artifact_serializer.cc
 new file mode 100644
-index 0000000000..a928159e5f
+index 0000000000..eff7821266
 --- /dev/null
 +++ b/third_party/blink/renderer/platform/graphics/paint/paint_artifact_serializer.cc
-@@ -0,0 +1,838 @@
+@@ -0,0 +1,599 @@
 +// Copyright 2024 The Chromium Authors
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -925,6 +976,7 @@ index 0000000000..a928159e5f
 +#include "third_party/blink/renderer/platform/graphics/paint/drawing_display_item.h"
 +#include "third_party/blink/renderer/platform/graphics/paint/effect_paint_property_node.h"
 +#include "third_party/blink/renderer/platform/graphics/paint/paint_artifact.h"
++#include "third_party/blink/renderer/platform/graphics/paint/property_tree_serializer.h"
 +#include "third_party/blink/renderer/platform/graphics/paint/transform_paint_property_node.h"
 +#include "third_party/blink/renderer/platform/json/json_values.h"
 +#include "third_party/skia/include/core/SkFont.h"
@@ -963,34 +1015,12 @@ index 0000000000..a928159e5f
 +  return json;
 +}
 +
-+// Helper to serialize gfx::RectF
-+std::unique_ptr<JSONArray> SerializeGfxRectF(const gfx::RectF& rect) {
-+  auto json = std::make_unique<JSONArray>();
-+  json->PushDouble(rect.x());
-+  json->PushDouble(rect.y());
-+  json->PushDouble(rect.width());
-+  json->PushDouble(rect.height());
-+  return json;
-+}
-+
 +// Helper to serialize a 4x4 matrix from SkM44
 +std::unique_ptr<JSONArray> SerializeSkM44(const SkM44& matrix) {
 +  auto json = std::make_unique<JSONArray>();
 +  for (int row = 0; row < 4; ++row) {
 +    for (int col = 0; col < 4; ++col) {
 +      json->PushDouble(matrix.rc(row, col));
-+    }
-+  }
-+  return json;
-+}
-+
-+// Helper to serialize gfx::Transform
-+std::unique_ptr<JSONArray> SerializeTransform(const gfx::Transform& transform) {
-+  auto json = std::make_unique<JSONArray>();
-+  // gfx::Transform stores as column-major, output as row-major for readability
-+  for (int row = 0; row < 4; ++row) {
-+    for (int col = 0; col < 4; ++col) {
-+      json->PushDouble(transform.rc(row, col));
 +    }
 +  }
 +  return json;
@@ -1465,224 +1495,6 @@ index 0000000000..a928159e5f
 +  }
 +}
 +
-+// Property tree node ID assignment helpers.
-+// Uses void* to avoid blink-gc checker issues with GC-managed pointers.
-+// This is safe because we only use these maps during serialization within
-+// a single stack frame - no GC can occur during this time.
-+class PropertyTreeIdMapper {
-+ public:
-+  int GetOrAssignTransformId(const TransformPaintPropertyNode* node) {
-+    if (!node)
-+      return -1;
-+    const void* key = static_cast<const void*>(node);
-+    auto it = transform_ids_.find(key);
-+    if (it != transform_ids_.end()) {
-+      return it->second;
-+    }
-+    // First assign IDs to parents (use UnaliasedParent to get correct type)
-+    if (auto* parent = node->UnaliasedParent()) {
-+      GetOrAssignTransformId(parent);
-+    }
-+    int id = next_transform_id_++;
-+    transform_ids_[key] = id;
-+    return id;
-+  }
-+
-+  int GetOrAssignClipId(const ClipPaintPropertyNode* node) {
-+    if (!node)
-+      return -1;
-+    const void* key = static_cast<const void*>(node);
-+    auto it = clip_ids_.find(key);
-+    if (it != clip_ids_.end()) {
-+      return it->second;
-+    }
-+    // First assign IDs to parents (use UnaliasedParent to get correct type)
-+    if (auto* parent = node->UnaliasedParent()) {
-+      GetOrAssignClipId(parent);
-+    }
-+    int id = next_clip_id_++;
-+    clip_ids_[key] = id;
-+    return id;
-+  }
-+
-+  int GetOrAssignEffectId(const EffectPaintPropertyNode* node) {
-+    if (!node)
-+      return -1;
-+    const void* key = static_cast<const void*>(node);
-+    auto it = effect_ids_.find(key);
-+    if (it != effect_ids_.end()) {
-+      return it->second;
-+    }
-+    // First assign IDs to parents (use UnaliasedParent to get correct type)
-+    if (auto* parent = node->UnaliasedParent()) {
-+      GetOrAssignEffectId(parent);
-+    }
-+    int id = next_effect_id_++;
-+    effect_ids_[key] = id;
-+    return id;
-+  }
-+
-+  const std::unordered_map<const void*, int>& GetTransformIds() const {
-+    return transform_ids_;
-+  }
-+  const std::unordered_map<const void*, int>& GetClipIds() const {
-+    return clip_ids_;
-+  }
-+  const std::unordered_map<const void*, int>& GetEffectIds() const {
-+    return effect_ids_;
-+  }
-+
-+ private:
-+  std::unordered_map<const void*, int> transform_ids_ ALLOW_DISCOURAGED_TYPE(
-+      "Using void* to avoid blink-gc issues with GC pointers");
-+  std::unordered_map<const void*, int> clip_ids_ ALLOW_DISCOURAGED_TYPE(
-+      "Using void* to avoid blink-gc issues with GC pointers");
-+  std::unordered_map<const void*, int> effect_ids_ ALLOW_DISCOURAGED_TYPE(
-+      "Using void* to avoid blink-gc issues with GC pointers");
-+  int next_transform_id_ = 0;
-+  int next_clip_id_ = 0;
-+  int next_effect_id_ = 0;
-+};
-+
-+// Serialize transform tree nodes - takes the id map that stores void* keys
-+std::unique_ptr<JSONObject> SerializeTransformTree(
-+    const std::unordered_map<const void*, int>& node_ids) {
-+  auto json = std::make_unique<JSONObject>();
-+  auto nodes_array = std::make_unique<JSONArray>();
-+
-+  // Create a vector of (id, void*) pairs for sorting by id
-+  std::vector<std::pair<int, const void*>> sorted_nodes;
-+  for (const auto& entry : node_ids) {
-+    sorted_nodes.push_back({entry.second, entry.first});
-+  }
-+  std::sort(sorted_nodes.begin(), sorted_nodes.end(),
-+            [](const auto& a, const auto& b) { return a.first < b.first; });
-+
-+  for (const auto& entry : sorted_nodes) {
-+    int id = entry.first;
-+    const auto* node =
-+        static_cast<const TransformPaintPropertyNode*>(entry.second);
-+
-+    auto node_json = std::make_unique<JSONObject>();
-+    node_json->SetInteger("id", id);
-+
-+    // Parent ID (use UnaliasedParent to get correct type)
-+    if (auto* parent = node->UnaliasedParent()) {
-+      const void* parent_key = static_cast<const void*>(parent);
-+      auto parent_it = node_ids.find(parent_key);
-+      node_json->SetInteger(
-+          "parent_id", parent_it != node_ids.end() ? parent_it->second : -1);
-+    } else {
-+      node_json->SetInteger("parent_id", -1);
-+    }
-+
-+    // Transform matrix
-+    if (node->IsIdentityOr2dTranslation()) {
-+      gfx::Vector2dF translation = node->Get2dTranslation();
-+      if (!translation.IsZero()) {
-+        auto translation_array = std::make_unique<JSONArray>();
-+        translation_array->PushDouble(translation.x());
-+        translation_array->PushDouble(translation.y());
-+        node_json->SetArray("translation2d", std::move(translation_array));
-+      }
-+    } else {
-+      node_json->SetArray("matrix", SerializeTransform(node->Matrix()));
-+    }
-+
-+    nodes_array->PushObject(std::move(node_json));
-+  }
-+
-+  json->SetArray("nodes", std::move(nodes_array));
-+  return json;
-+}
-+
-+// Serialize clip tree nodes
-+std::unique_ptr<JSONObject> SerializeClipTree(
-+    const std::unordered_map<const void*, int>& node_ids) {
-+  auto json = std::make_unique<JSONObject>();
-+  auto nodes_array = std::make_unique<JSONArray>();
-+
-+  // Create a vector of (id, void*) pairs for sorting by id
-+  std::vector<std::pair<int, const void*>> sorted_nodes;
-+  for (const auto& entry : node_ids) {
-+    sorted_nodes.push_back({entry.second, entry.first});
-+  }
-+  std::sort(sorted_nodes.begin(), sorted_nodes.end(),
-+            [](const auto& a, const auto& b) { return a.first < b.first; });
-+
-+  for (const auto& entry : sorted_nodes) {
-+    int id = entry.first;
-+    const auto* node = static_cast<const ClipPaintPropertyNode*>(entry.second);
-+
-+    auto node_json = std::make_unique<JSONObject>();
-+    node_json->SetInteger("id", id);
-+
-+    // Parent ID (use UnaliasedParent to get correct type)
-+    if (auto* parent = node->UnaliasedParent()) {
-+      const void* parent_key = static_cast<const void*>(parent);
-+      auto parent_it = node_ids.find(parent_key);
-+      node_json->SetInteger(
-+          "parent_id", parent_it != node_ids.end() ? parent_it->second : -1);
-+    } else {
-+      node_json->SetInteger("parent_id", -1);
-+    }
-+
-+    // Clip rect
-+    node_json->SetArray("clip_rect",
-+                        SerializeGfxRectF(node->PaintClipRect().Rect()));
-+
-+    nodes_array->PushObject(std::move(node_json));
-+  }
-+
-+  json->SetArray("nodes", std::move(nodes_array));
-+  return json;
-+}
-+
-+// Serialize effect tree nodes
-+std::unique_ptr<JSONObject> SerializeEffectTree(
-+    const std::unordered_map<const void*, int>& node_ids) {
-+  auto json = std::make_unique<JSONObject>();
-+  auto nodes_array = std::make_unique<JSONArray>();
-+
-+  // Create a vector of (id, void*) pairs for sorting by id
-+  std::vector<std::pair<int, const void*>> sorted_nodes;
-+  for (const auto& entry : node_ids) {
-+    sorted_nodes.push_back({entry.second, entry.first});
-+  }
-+  std::sort(sorted_nodes.begin(), sorted_nodes.end(),
-+            [](const auto& a, const auto& b) { return a.first < b.first; });
-+
-+  for (const auto& entry : sorted_nodes) {
-+    int id = entry.first;
-+    const auto* node =
-+        static_cast<const EffectPaintPropertyNode*>(entry.second);
-+
-+    auto node_json = std::make_unique<JSONObject>();
-+    node_json->SetInteger("id", id);
-+
-+    // Parent ID (use UnaliasedParent to get correct type)
-+    if (auto* parent = node->UnaliasedParent()) {
-+      const void* parent_key = static_cast<const void*>(parent);
-+      auto parent_it = node_ids.find(parent_key);
-+      node_json->SetInteger(
-+          "parent_id", parent_it != node_ids.end() ? parent_it->second : -1);
-+    } else {
-+      node_json->SetInteger("parent_id", -1);
-+    }
-+
-+    // Opacity
-+    node_json->SetDouble("opacity", node->Opacity());
-+
-+    // Blend mode
-+    node_json->SetString("blend_mode", SkBlendMode_Name(node->BlendMode()));
-+
-+    nodes_array->PushObject(std::move(node_json));
-+  }
-+
-+  json->SetArray("nodes", std::move(nodes_array));
-+  return json;
-+}
-+
 +}  // namespace
 +
 +std::unique_ptr<JSONObject> SerializeRawPaintOps(
@@ -1703,8 +1515,8 @@ index 0000000000..a928159e5f
 +  // Second pass: iterate through chunks to get property tree state for each op
 +  for (const PaintChunk& chunk : artifact.GetPaintChunks()) {
 +    // Get property tree IDs for this chunk
-+    int transform_id =
-+        id_mapper.GetOrAssignTransformId(&chunk.properties.Transform().Unalias());
++    int transform_id = id_mapper.GetOrAssignTransformId(
++        &chunk.properties.Transform().Unalias());
 +    int clip_id =
 +        id_mapper.GetOrAssignClipId(&chunk.properties.Clip().Unalias());
 +    int effect_id =
@@ -1817,3 +1629,320 @@ index e043c1a98d..b1029efe0e 100644
    // Any new paint operation will crash on nullptr.
    new_paint_artifact_ = nullptr;
    if (persistent_data_) {
+diff --git a/third_party/blink/renderer/platform/graphics/paint/property_tree_serializer.cc b/third_party/blink/renderer/platform/graphics/paint/property_tree_serializer.cc
+new file mode 100644
+index 0000000000..f535465576
+--- /dev/null
++++ b/third_party/blink/renderer/platform/graphics/paint/property_tree_serializer.cc
+@@ -0,0 +1,237 @@
++// Copyright 2024 The Chromium Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "third_party/blink/renderer/platform/graphics/paint/property_tree_serializer.h"
++
++#include <algorithm>
++#include <vector>
++
++#include "third_party/blink/renderer/platform/json/json_values.h"
++#include "third_party/skia/include/core/SkBlendMode.h"
++#include "ui/gfx/geometry/rect_f.h"
++#include "ui/gfx/geometry/transform.h"
++#include "ui/gfx/geometry/vector2d_f.h"
++
++namespace blink {
++
++// PropertyTreeIdMapper implementation
++
++int PropertyTreeIdMapper::GetOrAssignTransformId(
++    const TransformPaintPropertyNode* node) {
++  if (!node) {
++    return -1;
++  }
++  const void* key = static_cast<const void*>(node);
++  auto it = transform_ids_.find(key);
++  if (it != transform_ids_.end()) {
++    return it->second;
++  }
++  // First assign IDs to parents
++  if (auto* parent = node->UnaliasedParent()) {
++    GetOrAssignTransformId(parent);
++  }
++  int id = next_transform_id_++;
++  transform_ids_[key] = id;
++  return id;
++}
++
++int PropertyTreeIdMapper::GetOrAssignClipId(const ClipPaintPropertyNode* node) {
++  if (!node) {
++    return -1;
++  }
++  const void* key = static_cast<const void*>(node);
++  auto it = clip_ids_.find(key);
++  if (it != clip_ids_.end()) {
++    return it->second;
++  }
++  // First assign IDs to parents
++  if (auto* parent = node->UnaliasedParent()) {
++    GetOrAssignClipId(parent);
++  }
++  int id = next_clip_id_++;
++  clip_ids_[key] = id;
++  return id;
++}
++
++int PropertyTreeIdMapper::GetOrAssignEffectId(
++    const EffectPaintPropertyNode* node) {
++  if (!node) {
++    return -1;
++  }
++  const void* key = static_cast<const void*>(node);
++  auto it = effect_ids_.find(key);
++  if (it != effect_ids_.end()) {
++    return it->second;
++  }
++  // First assign IDs to parents
++  if (auto* parent = node->UnaliasedParent()) {
++    GetOrAssignEffectId(parent);
++  }
++  int id = next_effect_id_++;
++  effect_ids_[key] = id;
++  return id;
++}
++
++// Helper to serialize gfx::Transform to JSON array (row-major 4x4 matrix)
++namespace {
++
++std::unique_ptr<JSONArray> SerializeTransformMatrix(
++    const gfx::Transform& transform) {
++  auto json = std::make_unique<JSONArray>();
++  for (int row = 0; row < 4; ++row) {
++    for (int col = 0; col < 4; ++col) {
++      json->PushDouble(transform.rc(row, col));
++    }
++  }
++  return json;
++}
++
++std::unique_ptr<JSONArray> SerializeRectF(const gfx::RectF& rect) {
++  auto json = std::make_unique<JSONArray>();
++  json->PushDouble(rect.x());
++  json->PushDouble(rect.y());
++  json->PushDouble(rect.width());
++  json->PushDouble(rect.height());
++  return json;
++}
++
++}  // namespace
++
++std::unique_ptr<JSONObject> SerializeTransformTree(
++    const std::unordered_map<const void*, int>& node_ids) {
++  auto json = std::make_unique<JSONObject>();
++  auto nodes_array = std::make_unique<JSONArray>();
++
++  // Sort by ID for consistent output
++  std::vector<std::pair<int, const void*>> sorted_nodes;
++  for (const auto& entry : node_ids) {
++    sorted_nodes.push_back({entry.second, entry.first});
++  }
++  std::sort(sorted_nodes.begin(), sorted_nodes.end(),
++            [](const auto& a, const auto& b) { return a.first < b.first; });
++
++  for (const auto& entry : sorted_nodes) {
++    int id = entry.first;
++    const auto* node =
++        static_cast<const TransformPaintPropertyNode*>(entry.second);
++
++    auto node_json = std::make_unique<JSONObject>();
++    node_json->SetInteger("id", id);
++
++    // Parent ID
++    if (auto* parent = node->UnaliasedParent()) {
++      const void* parent_key = static_cast<const void*>(parent);
++      auto parent_it = node_ids.find(parent_key);
++      node_json->SetInteger(
++          "parent_id", parent_it != node_ids.end() ? parent_it->second : -1);
++    } else {
++      node_json->SetInteger("parent_id", -1);
++    }
++
++    // Transform matrix
++    if (node->IsIdentityOr2dTranslation()) {
++      gfx::Vector2dF translation = node->Get2dTranslation();
++      if (!translation.IsZero()) {
++        auto translation_array = std::make_unique<JSONArray>();
++        translation_array->PushDouble(translation.x());
++        translation_array->PushDouble(translation.y());
++        node_json->SetArray("translation2d", std::move(translation_array));
++      }
++    } else {
++      node_json->SetArray("matrix", SerializeTransformMatrix(node->Matrix()));
++    }
++
++    nodes_array->PushObject(std::move(node_json));
++  }
++
++  json->SetArray("nodes", std::move(nodes_array));
++  return json;
++}
++
++std::unique_ptr<JSONObject> SerializeClipTree(
++    const std::unordered_map<const void*, int>& node_ids) {
++  auto json = std::make_unique<JSONObject>();
++  auto nodes_array = std::make_unique<JSONArray>();
++
++  // Sort by ID for consistent output
++  std::vector<std::pair<int, const void*>> sorted_nodes;
++  for (const auto& entry : node_ids) {
++    sorted_nodes.push_back({entry.second, entry.first});
++  }
++  std::sort(sorted_nodes.begin(), sorted_nodes.end(),
++            [](const auto& a, const auto& b) { return a.first < b.first; });
++
++  for (const auto& entry : sorted_nodes) {
++    int id = entry.first;
++    const auto* node = static_cast<const ClipPaintPropertyNode*>(entry.second);
++
++    auto node_json = std::make_unique<JSONObject>();
++    node_json->SetInteger("id", id);
++
++    // Parent ID
++    if (auto* parent = node->UnaliasedParent()) {
++      const void* parent_key = static_cast<const void*>(parent);
++      auto parent_it = node_ids.find(parent_key);
++      node_json->SetInteger(
++          "parent_id", parent_it != node_ids.end() ? parent_it->second : -1);
++    } else {
++      node_json->SetInteger("parent_id", -1);
++    }
++
++    // Clip rect
++    node_json->SetArray("clip_rect",
++                        SerializeRectF(node->PaintClipRect().Rect()));
++
++    nodes_array->PushObject(std::move(node_json));
++  }
++
++  json->SetArray("nodes", std::move(nodes_array));
++  return json;
++}
++
++std::unique_ptr<JSONObject> SerializeEffectTree(
++    const std::unordered_map<const void*, int>& node_ids) {
++  auto json = std::make_unique<JSONObject>();
++  auto nodes_array = std::make_unique<JSONArray>();
++
++  // Sort by ID for consistent output
++  std::vector<std::pair<int, const void*>> sorted_nodes;
++  for (const auto& entry : node_ids) {
++    sorted_nodes.push_back({entry.second, entry.first});
++  }
++  std::sort(sorted_nodes.begin(), sorted_nodes.end(),
++            [](const auto& a, const auto& b) { return a.first < b.first; });
++
++  for (const auto& entry : sorted_nodes) {
++    int id = entry.first;
++    const auto* node =
++        static_cast<const EffectPaintPropertyNode*>(entry.second);
++
++    auto node_json = std::make_unique<JSONObject>();
++    node_json->SetInteger("id", id);
++
++    // Parent ID
++    if (auto* parent = node->UnaliasedParent()) {
++      const void* parent_key = static_cast<const void*>(parent);
++      auto parent_it = node_ids.find(parent_key);
++      node_json->SetInteger(
++          "parent_id", parent_it != node_ids.end() ? parent_it->second : -1);
++    } else {
++      node_json->SetInteger("parent_id", -1);
++    }
++
++    // Opacity
++    node_json->SetDouble("opacity", node->Opacity());
++
++    // Blend mode
++    node_json->SetString("blend_mode", SkBlendMode_Name(node->BlendMode()));
++
++    nodes_array->PushObject(std::move(node_json));
++  }
++
++  json->SetArray("nodes", std::move(nodes_array));
++  return json;
++}
++
++}  // namespace blink
+diff --git a/third_party/blink/renderer/platform/graphics/paint/property_tree_serializer.h b/third_party/blink/renderer/platform/graphics/paint/property_tree_serializer.h
+new file mode 100644
+index 0000000000..af9b526ca2
+--- /dev/null
++++ b/third_party/blink/renderer/platform/graphics/paint/property_tree_serializer.h
+@@ -0,0 +1,68 @@
++// Copyright 2024 The Chromium Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef THIRD_PARTY_BLINK_RENDERER_PLATFORM_GRAPHICS_PAINT_PROPERTY_TREE_SERIALIZER_H_
++#define THIRD_PARTY_BLINK_RENDERER_PLATFORM_GRAPHICS_PAINT_PROPERTY_TREE_SERIALIZER_H_
++
++#include <memory>
++#include <unordered_map>
++
++#include "third_party/blink/renderer/platform/allow_discouraged_type.h"
++#include "third_party/blink/renderer/platform/graphics/paint/clip_paint_property_node.h"
++#include "third_party/blink/renderer/platform/graphics/paint/effect_paint_property_node.h"
++#include "third_party/blink/renderer/platform/graphics/paint/transform_paint_property_node.h"
++#include "third_party/blink/renderer/platform/platform_export.h"
++
++namespace blink {
++
++class JSONObject;
++
++// Property tree node ID assignment helper for serialization.
++// Uses void* keys to avoid blink-gc checker issues with GC-managed pointers.
++// This is safe because we only use these maps during serialization within
++// a single stack frame - no GC can occur during this time.
++class PLATFORM_EXPORT PropertyTreeIdMapper {
++ public:
++  int GetOrAssignTransformId(const TransformPaintPropertyNode* node);
++  int GetOrAssignClipId(const ClipPaintPropertyNode* node);
++  int GetOrAssignEffectId(const EffectPaintPropertyNode* node);
++
++  const std::unordered_map<const void*, int>& GetTransformIds() const {
++    return transform_ids_;
++  }
++  const std::unordered_map<const void*, int>& GetClipIds() const {
++    return clip_ids_;
++  }
++  const std::unordered_map<const void*, int>& GetEffectIds() const {
++    return effect_ids_;
++  }
++
++ private:
++  std::unordered_map<const void*, int> transform_ids_ ALLOW_DISCOURAGED_TYPE(
++      "Using void* to avoid blink-gc issues with GC pointers");
++  std::unordered_map<const void*, int> clip_ids_ ALLOW_DISCOURAGED_TYPE(
++      "Using void* to avoid blink-gc issues with GC pointers");
++  std::unordered_map<const void*, int> effect_ids_ ALLOW_DISCOURAGED_TYPE(
++      "Using void* to avoid blink-gc issues with GC pointers");
++  int next_transform_id_ = 0;
++  int next_clip_id_ = 0;
++  int next_effect_id_ = 0;
++};
++
++// Serialize transform tree nodes to JSON.
++// Takes the ID map from PropertyTreeIdMapper.
++PLATFORM_EXPORT std::unique_ptr<JSONObject> SerializeTransformTree(
++    const std::unordered_map<const void*, int>& node_ids);
++
++// Serialize clip tree nodes to JSON.
++PLATFORM_EXPORT std::unique_ptr<JSONObject> SerializeClipTree(
++    const std::unordered_map<const void*, int>& node_ids);
++
++// Serialize effect tree nodes to JSON.
++PLATFORM_EXPORT std::unique_ptr<JSONObject> SerializeEffectTree(
++    const std::unordered_map<const void*, int>& node_ids);
++
++}  // namespace blink
++
++#endif  // THIRD_PARTY_BLINK_RENDERER_PLATFORM_GRAPHICS_PAINT_PROPERTY_TREE_SERIALIZER_H_
