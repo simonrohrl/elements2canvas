@@ -122,7 +122,9 @@ class PaintOpRenderer {
     }
 
     // Apply shadow/looper effect - draws the shape multiple times for each shadow layer
-    // Returns true if shadows were applied (caller should also draw the normal shape)
+    // Returns: 'shadow_only' if this is a shadow-only draw (don't draw normal shape),
+    //          'shadow_with_content' if shadows were applied but content should also be drawn,
+    //          false if no shadows
     applyShadows(canvas, op, drawFn) {
         if (!op.flags || !op.flags.shadows || op.flags.shadows.length === 0) {
             return false;
@@ -132,6 +134,42 @@ class PaintOpRenderer {
         // The last layer in the array typically has kDontModifyPaintFlag set,
         // meaning it's the actual shape (drawn normally after shadows)
         const shadows = op.flags.shadows;
+
+        // Check if there's a "draw unmodified" layer (flags & 4)
+        // If not, and the op's color is black, this is a shadow-only draw
+        // (Chromium draws box-shadows as BLACK with a DrawLooper that transforms to shadow color)
+        const hasUnmodifiedLayer = shadows.some(s => s.flags & 4);
+        const opColor = op.flags;
+        const isBlackFill = opColor && opColor.r === 0 && opColor.g === 0 && opColor.b === 0;
+        const isShadowOnlyDraw = !hasUnmodifiedLayer && isBlackFill;
+
+        // Always log shadow info to console for debugging
+        console.log(`[SHADOW] applyShadows called:`, {
+            opType: op.type,
+            rect: op.rect,
+            hasUnmodifiedLayer,
+            isBlackFill,
+            isShadowOnlyDraw,
+            opColor: { r: opColor?.r, g: opColor?.g, b: opColor?.b, a: opColor?.a },
+            shadows: shadows.map((s, i) => ({
+                index: i,
+                flags: s.flags,
+                flagsBinary: (s.flags || 0).toString(2).padStart(8, '0'),
+                hasOverrideAlpha: !!(s.flags & 2),
+                hasDontModifyPaint: !!(s.flags & 4),
+                color: { r: s.r, g: s.g, b: s.b, a: s.a },
+                blur: s.blurSigma,
+                offset: { x: s.offsetX, y: s.offsetY }
+            }))
+        });
+
+        if (this.debug) {
+            this.log(`applyShadows: hasUnmodifiedLayer=${hasUnmodifiedLayer}, isBlackFill=${isBlackFill}, isShadowOnlyDraw=${isShadowOnlyDraw}`);
+            this.log(`  op.flags: r=${opColor?.r}, g=${opColor?.g}, b=${opColor?.b}, a=${opColor?.a}`);
+            shadows.forEach((s, i) => {
+                this.log(`  shadow[${i}]: flags=${s.flags}, color=(${s.r},${s.g},${s.b},${s.a}), blur=${s.blurSigma}, offset=(${s.offsetX},${s.offsetY})`);
+            });
+        }
 
         for (let i = shadows.length - 1; i >= 0; i--) {
             const shadow = shadows[i];
@@ -171,23 +209,30 @@ class PaintOpRenderer {
                 shadowPaint.setMaskFilter(blurFilter);
             }
 
-            // kOverrideAlphaFlag (1 << 1 = 2) sets alpha to opaque
-            if (shadow.flags & 2) {
-                shadowPaint.setAlphaf(1.0);
-            }
+            // kOverrideAlphaFlag (1 << 1 = 2) - this flag means to ignore the original paint's alpha
+            // and use full opacity for the shadow color itself. The shadow color already has its own alpha.
+            // We should NOT override the shadow color's alpha - just ensure we're not multiplying
+            // by an additional alpha from the original paint.
+            // So we don't need to do anything special here - the shadow color's alpha is already set.
 
             if (postTransform) {
                 canvas.translate(shadow.offsetX, shadow.offsetY);
             }
 
             // Draw the shadow shape
+            console.log(`[SHADOW] Drawing shadow layer ${i}:`, {
+                color: { r: shadow.r, g: shadow.g, b: shadow.b, a: shadow.a },
+                blur: shadow.blurSigma,
+                offset: { x: shadow.offsetX, y: shadow.offsetY },
+                flags: shadow.flags
+            });
             drawFn(canvas, shadowPaint);
 
             shadowPaint.delete();
             canvas.restore();
         }
 
-        return true;
+        return isShadowOnlyDraw ? 'shadow_only' : 'shadow_with_content';
     }
 
     renderOp(canvas, op) {
@@ -227,7 +272,12 @@ class PaintOpRenderer {
             case 'ClipRectOp':
                 if (op.rect && op.rect.length === 4) {
                     const rect = this.ck.LTRBRect(op.rect[0], op.rect[1], op.rect[2], op.rect[3]);
-                    canvas.clipRect(rect, this.ck.ClipOp.Intersect, op.antiAlias !== false);
+                    // clipOp: 0 = Difference (clip OUT), 1 = Intersect (clip IN)
+                    const clipOp = op.clipOp === 0 ? this.ck.ClipOp.Difference : this.ck.ClipOp.Intersect;
+                    canvas.clipRect(rect, clipOp, op.antiAlias !== false);
+                    if (this.debug && op.clipOp === 0) {
+                        this.log(`ClipRect [${op.rect.join(', ')}] DIFFERENCE (clip out)`);
+                    }
                 }
                 break;
 
@@ -235,7 +285,12 @@ class PaintOpRenderer {
                 if (op.rect && op.radii) {
                     const rect = this.ck.LTRBRect(op.rect[0], op.rect[1], op.rect[2], op.rect[3]);
                     const rrect = this.ck.RRectXY(rect, op.radii[0] || 0, op.radii[1] || 0);
-                    canvas.clipRRect(rrect, this.ck.ClipOp.Intersect, op.antiAlias !== false);
+                    // clipOp: 0 = Difference (clip OUT), 1 = Intersect (clip IN)
+                    const clipOp = op.clipOp === 0 ? this.ck.ClipOp.Difference : this.ck.ClipOp.Intersect;
+                    canvas.clipRRect(rrect, clipOp, op.antiAlias !== false);
+                    if (this.debug && op.clipOp === 0) {
+                        this.log(`ClipRRect [${op.rect.join(', ')}] DIFFERENCE (clip out)`);
+                    }
                 }
                 break;
 
@@ -243,7 +298,12 @@ class PaintOpRenderer {
                 if (op.path) {
                     const path = this.ck.Path.MakeFromSVGString(op.path);
                     if (path) {
-                        canvas.clipPath(path, this.ck.ClipOp.Intersect, op.antiAlias !== false);
+                        // clipOp: 0 = Difference (clip OUT), 1 = Intersect (clip IN)
+                        const clipOp = op.clipOp === 0 ? this.ck.ClipOp.Difference : this.ck.ClipOp.Intersect;
+                        canvas.clipPath(path, clipOp, op.antiAlias !== false);
+                        if (this.debug && op.clipOp === 0) {
+                            this.log(`ClipPath DIFFERENCE (clip out)`);
+                        }
                         path.delete();
                     }
                 }
@@ -321,9 +381,18 @@ class PaintOpRenderer {
         const rect = this.ck.LTRBRect(op.rect[0], op.rect[1], op.rect[2], op.rect[3]);
 
         // Draw shadows first if present
-        this.applyShadows(canvas, op, (c, p) => {
+        const shadowResult = this.applyShadows(canvas, op, (c, p) => {
             c.drawRect(rect, p);
         });
+
+        // If this is a shadow-only draw (Chromium box-shadow), don't draw the normal shape
+        // The shadow was drawn with BLACK fill + DrawLooper that transforms to shadow color
+        if (shadowResult === 'shadow_only') {
+            if (this.debug) {
+                this.log(`DrawRect [${op.rect.join(', ')}] (shadow-only)`);
+            }
+            return;
+        }
 
         const paint = new this.ck.Paint();
         paint.setAntiAlias(true);
@@ -400,9 +469,18 @@ class PaintOpRenderer {
         const rrect = this.ck.RRectXY(rect, rx, ry);
 
         // Draw shadows first if present
-        this.applyShadows(canvas, op, (c, p) => {
+        const shadowResult = this.applyShadows(canvas, op, (c, p) => {
             c.drawRRect(rrect, p);
         });
+
+        // If this is a shadow-only draw (Chromium box-shadow), don't draw the normal shape
+        // The shadow was drawn with BLACK fill + DrawLooper that transforms to shadow color
+        if (shadowResult === 'shadow_only') {
+            if (this.debug) {
+                this.log(`DrawRRect [${op.rect.join(', ')}] (shadow-only)`);
+            }
+            return;
+        }
 
         const paint = new this.ck.Paint();
         paint.setAntiAlias(true);
@@ -488,9 +566,18 @@ class PaintOpRenderer {
         const innerRRect = this.ck.RRectXY(innerRect, innerRx, innerRy);
 
         // Draw shadows first if present
-        this.applyShadows(canvas, op, (c, p) => {
+        const shadowResult = this.applyShadows(canvas, op, (c, p) => {
             c.drawDRRect(outerRRect, innerRRect, p);
         });
+
+        // If this is a shadow-only draw (Chromium box-shadow), don't draw the normal shape
+        // The shadow was drawn with BLACK fill + DrawLooper that transforms to shadow color
+        if (shadowResult === 'shadow_only') {
+            if (this.debug) {
+                this.log(`DrawDRRect outer=[${op.outer_rect.map(v => Math.round(v)).join(',')}] inner=[${op.inner_rect.map(v => Math.round(v)).join(',')}] (shadow-only)`);
+            }
+            return;
+        }
 
         const paint = new this.ck.Paint();
         paint.setAntiAlias(true);
@@ -546,6 +633,20 @@ class PaintOpRenderer {
             if (fillTypes[op.fillType]) {
                 path.setFillType(fillTypes[op.fillType]);
             }
+        }
+
+        // Draw shadows first if present
+        const shadowResult = this.applyShadows(canvas, op, (c, p) => {
+            c.drawPath(path, p);
+        });
+
+        // If this is a shadow-only draw, don't draw the normal shape
+        if (shadowResult === 'shadow_only') {
+            if (this.debug) {
+                this.log(`DrawPath (shadow-only)`);
+            }
+            path.delete();
+            return;
         }
 
         const paint = new this.ck.Paint();
