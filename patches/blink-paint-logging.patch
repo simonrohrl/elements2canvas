@@ -1063,6 +1063,29 @@ index 0000000000..114a4e63f3
 +        json->SetString("shaderType", "kTwoPointConicalGradient");
 +      } else if (type == cc::PaintShader::Type::kSweepGradient) {
 +        json->SetString("shaderType", "kSweepGradient");
++      } else if (type == cc::PaintShader::Type::kPaintRecord) {
++        // Paint record shaders are used for tiled patterns (e.g., wavy underlines)
++        json->SetString("shaderType", "kPaintRecord");
++        // Serialize tile rect
++        const SkRect& tile = shader->tile();
++        auto tile_rect = std::make_unique<JSONArray>();
++        tile_rect->PushDouble(tile.left());
++        tile_rect->PushDouble(tile.top());
++        tile_rect->PushDouble(tile.right());
++        tile_rect->PushDouble(tile.bottom());
++        json->SetArray("tileRect", std::move(tile_rect));
++        // Serialize tile mode
++        json->SetInteger("tileModeX", static_cast<int>(shader->tx()));
++        json->SetInteger("tileModeY", static_cast<int>(shader->ty()));
++        // Serialize the paint record ops
++        if (shader->paint_record()) {
++          json->SetArray("tileRecord", SerializePaintRecord(*shader->paint_record()));
++        }
++      } else if (type == cc::PaintShader::Type::kImage) {
++        json->SetString("shaderType", "kImage");
++        // Image shaders are used for background images, etc.
++        json->SetInteger("tileModeX", static_cast<int>(shader->tx()));
++        json->SetInteger("tileModeY", static_cast<int>(shader->ty()));
 +      } else {
 +        json->SetString("shaderType", "other");
 +      }
@@ -1199,6 +1222,7 @@ index 0000000000..114a4e63f3
 +      json->SetDouble("y0", draw_op.y0);
 +      json->SetDouble("x1", draw_op.x1);
 +      json->SetDouble("y1", draw_op.y1);
++      json->SetObject("flags", SerializePaintFlags(draw_op.flags));
 +      break;
 +    }
 +    case cc::PaintOpType::kDrawOval: {

@@ -328,6 +328,10 @@ class PaintOpRenderer {
                 }
                 break;
 
+            case 'DrawLineOp':
+                this.drawLine(canvas, op);
+                break;
+
             case 'DrawTextBlobOp':
                 this.drawTextBlob(canvas, op);
                 break;
@@ -397,7 +401,20 @@ class PaintOpRenderer {
         const paint = new this.ck.Paint();
         paint.setAntiAlias(true);
 
-        if (op.flags && op.flags.shaderType && op.flags.gradientColors) {
+        if (op.flags && op.flags.shaderType === 'kPaintRecord' && op.flags.tileRecord) {
+            // Paint record shader - used for tiled patterns like wavy underlines
+            this.drawTiledPattern(canvas, op, rect);
+            paint.delete();
+            return;
+        } else if (op.flags && op.flags.shaderType === 'other' && op.flags.hasShader) {
+            // Unknown shader type without data - skip rendering to avoid black rectangles
+            // This happens with older captures that didn't serialize the shader content
+            if (this.debug) {
+                this.log(`DrawRect [${op.rect.join(', ')}] skipped (unknown shader without data)`);
+            }
+            paint.delete();
+            return;
+        } else if (op.flags && op.flags.shaderType && op.flags.gradientColors) {
             const colors = op.flags.gradientColors.map(c =>
                 this.ck.Color4f(c.r || 0, c.g || 0, c.b || 0, c.a || 1)
             );
@@ -700,6 +717,108 @@ class PaintOpRenderer {
             canvas.saveLayer(paint);
         }
         paint.delete();
+    }
+
+    // Draw a line from (x0, y0) to (x1, y1)
+    // Used for text decorations (underlines, strikethroughs, etc.)
+    drawLine(canvas, op) {
+        const paint = new this.ck.Paint();
+        paint.setAntiAlias(true);
+
+        // Get color and style from flags
+        if (op.flags) {
+            const c = op.flags;
+            paint.setColor(this.ck.Color4f(c.r || 0, c.g || 0, c.b || 0, c.a || 1));
+
+            // DrawLine in Skia uses stroke style
+            paint.setStyle(this.ck.PaintStyle.Stroke);
+            paint.setStrokeWidth(c.strokeWidth || 1);
+
+            // Apply stroke cap (round caps for dotted lines, butt for regular)
+            if (c.strokeCap === 1) {
+                paint.setStrokeCap(this.ck.StrokeCap.Round);
+            } else if (c.strokeCap === 2) {
+                paint.setStrokeCap(this.ck.StrokeCap.Square);
+            } else {
+                paint.setStrokeCap(this.ck.StrokeCap.Butt);
+            }
+
+            // Apply dash pattern if present (for dotted/dashed lines)
+            if (c.dashPattern && c.dashPattern.intervals) {
+                const intervals = c.dashPattern.intervals;
+                const phase = c.dashPattern.phase || 0;
+                const pathEffect = this.ck.PathEffect.MakeDash(intervals, phase);
+                if (pathEffect) {
+                    paint.setPathEffect(pathEffect);
+                }
+            }
+        } else {
+            // Default: black line with 1px stroke
+            paint.setColor(this.ck.Color4f(0, 0, 0, 1));
+            paint.setStyle(this.ck.PaintStyle.Stroke);
+            paint.setStrokeWidth(1);
+        }
+
+        canvas.drawLine(op.x0, op.y0, op.x1, op.y1, paint);
+
+        if (this.debug) {
+            this.log(`DrawLine (${op.x0}, ${op.y0}) -> (${op.x1}, ${op.y1})`);
+        }
+
+        paint.delete();
+    }
+
+    // Draw a tiled pattern (used for wavy underlines)
+    // The tile record contains the pattern to repeat
+    drawTiledPattern(canvas, op, destRect) {
+        const tileRect = op.flags.tileRect;
+        const tileRecord = op.flags.tileRecord;
+
+        if (!tileRect || !tileRecord || tileRecord.length === 0) {
+            if (this.debug) this.log('drawTiledPattern: missing tile data');
+            return;
+        }
+
+        const tileWidth = tileRect[2] - tileRect[0];
+        const tileHeight = tileRect[3] - tileRect[1];
+        const destWidth = destRect.fRight - destRect.fLeft;
+        const destHeight = destRect.fBottom - destRect.fTop;
+
+        if (tileWidth <= 0 || tileHeight <= 0) {
+            if (this.debug) this.log('drawTiledPattern: invalid tile dimensions');
+            return;
+        }
+
+        canvas.save();
+        // Clip to destination rectangle
+        canvas.clipRect(destRect, this.ck.ClipOp.Intersect, true);
+        // Translate to destination origin
+        canvas.translate(destRect.fLeft, destRect.fTop);
+
+        // Calculate how many tiles we need
+        const tilesX = Math.ceil(destWidth / tileWidth) + 1;
+        const tilesY = Math.ceil(destHeight / tileHeight) + 1;
+
+        // Draw the tile pattern repeatedly
+        for (let ty = 0; ty < tilesY; ty++) {
+            for (let tx = 0; tx < tilesX; tx++) {
+                canvas.save();
+                canvas.translate(tx * tileWidth, ty * tileHeight);
+
+                // Render each op in the tile record
+                for (const tileOp of tileRecord) {
+                    this.renderOp(canvas, tileOp);
+                }
+
+                canvas.restore();
+            }
+        }
+
+        canvas.restore();
+
+        if (this.debug) {
+            this.log(`drawTiledPattern: ${tilesX}x${tilesY} tiles of ${tileWidth}x${tileHeight}`);
+        }
     }
 
     drawTextBlob(canvas, op) {
