@@ -69,17 +69,346 @@ index 29dc5c26dd..95dd6333f7 100644
  
    // Returns true if the shader looks like it is valid (ie the members required
 diff --git a/third_party/blink/renderer/core/paint/paint_layer_painter.cc b/third_party/blink/renderer/core/paint/paint_layer_painter.cc
-index 317149bc68..488324dd43 100644
+index 317149bc68..f09bbfd7b4 100644
 --- a/third_party/blink/renderer/core/paint/paint_layer_painter.cc
 +++ b/third_party/blink/renderer/core/paint/paint_layer_painter.cc
-@@ -38,7 +38,6 @@
+@@ -6,6 +6,7 @@
+ 
+ #include <optional>
+ 
++#include "base/logging.h"
+ #include "cc/layers/view_transition_content_layer.h"
+ #include "third_party/blink/renderer/core/frame/local_frame.h"
+ #include "third_party/blink/renderer/core/frame/local_frame_view.h"
+@@ -37,8 +38,9 @@
+ #include "third_party/blink/renderer/platform/graphics/paint/scoped_effectively_invisible.h"
  #include "third_party/blink/renderer/platform/graphics/paint/scoped_paint_chunk_properties.h"
  #include "third_party/blink/renderer/platform/graphics/paint/subsequence_recorder.h"
++#include "third_party/blink/renderer/platform/json/json_values.h"
  #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 -#include "third_party/blink/renderer/platform/wtf/casting.h"
++#include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
  #include "ui/gfx/geometry/point3_f.h"
  
  namespace blink {
+@@ -141,28 +143,96 @@ scoped_refptr<cc::ViewTransitionContentLayer> GetTransitionScopeSnapshotLayer(
+   return nullptr;
+ }
+ 
++// Helper to get a debug name for a LayoutObject
++String GetLayoutObjectDebugName(const LayoutObject& object) {
++  StringBuilder name;
++  name.Append(object.DebugName());
++  if (Node* node = object.GetNode()) {
++    if (Element* element = DynamicTo<Element>(node)) {
++      if (element->HasID()) {
++        name.Append("#");
++        name.Append(element->GetIdAttribute());
++      }
++      if (element->HasClass()) {
++        const SpaceSplitString& classes = element->ClassNames();
++        for (wtf_size_t i = 0; i < classes.size(); ++i) {
++          name.Append(".");
++          name.Append(classes[i]);
++        }
++      }
++    }
++  }
++  return name.ToString();
++}
++
++// Serialize a single LayoutObject to JSON
++std::unique_ptr<JSONObject> SerializeLayoutObject(const LayoutObject& object) {
++  auto json = std::make_unique<JSONObject>();
++  json->SetString("name", GetLayoutObjectDebugName(object));
++  json->SetInteger("z_index", object.StyleRef().EffectiveZIndex());
++  json->SetBoolean("is_stacking_context", object.IsStackingContext());
++  json->SetBoolean("is_stacked", object.IsStacked());
++  json->SetBoolean("has_layer", object.HasLayer());
++
++  if (Node* node = object.GetNode()) {
++    if (node->IsElementNode()) {
++      json->SetString("tag", To<Element>(node)->TagQName().ToString());
++    }
++  }
++
++  return json;
++}
++
++// Log the LAYOUT TREE structure recursively (DOM order)
++void LogLayoutTree(const LayoutObject& object,
++                   JSONArray* objects_array,
++                   int depth = 0) {
++  auto obj_json = SerializeLayoutObject(object);
++  obj_json->SetInteger("depth", depth);
++
++  // Add children names in DOM order
++  auto children_array = std::make_unique<JSONArray>();
++  for (LayoutObject* child = object.SlowFirstChild(); child;
++       child = child->NextSibling()) {
++    children_array->PushString(GetLayoutObjectDebugName(*child));
++  }
++  obj_json->SetArray("children", std::move(children_array));
++
++  objects_array->PushObject(std::move(obj_json));
++
++  // Recurse to children in DOM order
++  for (LayoutObject* child = object.SlowFirstChild(); child;
++       child = child->NextSibling()) {
++    LogLayoutTree(*child, objects_array, depth + 1);
++  }
++}
++
+ }  // namespace
+ 
+ bool PaintLayerPainter::PaintedOutputInvisible(const ComputedStyle& style) {
+-  if (style.HasNonInitialBackdropFilter())
++  if (style.HasNonInitialBackdropFilter()) {
+     return false;
++  }
+ 
+   // Always paint when 'will-change: opacity' is present. Reduces jank for
+   // common animation implementation approaches, for example, an element that
+   // starts with opacity zero and later begins to animate.
+-  if (style.HasWillChangeOpacityHint())
++  if (style.HasWillChangeOpacityHint()) {
+     return false;
++  }
+ 
+-  if (style.HasCurrentOpacityAnimation())
++  if (style.HasCurrentOpacityAnimation()) {
+     return false;
++  }
+ 
+   // 0.0004f < 1/2048. With 10-bit color channels (only available on the
+   // newest Macs; otherwise it's 8-bit), we see that an alpha of 1/2048 or
+   // less leads to a color output of less than 0.5 in all channels, hence
+   // not visible.
+   static const float kMinimumVisibleOpacity = 0.0004f;
+-  if (style.Opacity() < kMinimumVisibleOpacity)
++  if (style.Opacity() < kMinimumVisibleOpacity) {
+     return true;
++  }
+ 
+   return false;
+ }
+@@ -200,19 +270,25 @@ static bool ShouldCreateSubsequence(const PaintLayer& paint_layer,
+                                     const GraphicsContext& context,
+                                     PaintFlags paint_flags) {
+   // Caching is not needed during printing or painting previews.
+-  if (paint_layer.GetLayoutObject().GetDocument().IsPrintingOrPaintingPreview())
++  if (paint_layer.GetLayoutObject()
++          .GetDocument()
++          .IsPrintingOrPaintingPreview()) {
+     return false;
++  }
+ 
+-  if (context.GetPaintController().IsSkippingCache())
++  if (context.GetPaintController().IsSkippingCache()) {
+     return false;
++  }
+ 
+-  if (!paint_layer.SupportsSubsequenceCaching())
++  if (!paint_layer.SupportsSubsequenceCaching()) {
+     return false;
++  }
+ 
+   // Don't create subsequence during special painting to avoid cache conflict
+   // with normal painting.
+-  if (paint_flags & PaintFlag::kOmitCompositingInfo)
++  if (paint_flags & PaintFlag::kOmitCompositingInfo) {
+     return false;
++  }
+ 
+   // Create subsequence if the layer will create a paint chunk because of
+   // different properties.
+@@ -272,8 +348,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
+     return kFullyPainted;
+   }
+ 
+-  if (object.GetFrameView()->ShouldThrottleRendering())
++  if (object.GetFrameView()->ShouldThrottleRendering()) {
+     return kFullyPainted;
++  }
+ 
+   if (object.IsFragmentLessBox()) {
+     return kFullyPainted;
+@@ -282,8 +359,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
+   // Non self-painting layers without self-painting descendants don't need to be
+   // painted as their layoutObject() should properly paint itself.
+   if (!paint_layer_.IsSelfPaintingLayer() &&
+-      !paint_layer_.HasSelfPaintingLayerDescendant())
++      !paint_layer_.HasSelfPaintingLayerDescendant()) {
+     return kFullyPainted;
++  }
+ 
+   std::optional<CheckAncestorPositionVisibilityScope>
+       check_position_visibility_scope;
+@@ -304,10 +382,20 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
+     return kMayBeClippedByCullRect;
+   }
+ 
++  // Log the full LAYOUT TREE structure at the root (DOM order)
++  if (IsA<LayoutView>(object)) {
++    auto tree_json = std::make_unique<JSONObject>();
++    auto layout_tree_array = std::make_unique<JSONArray>();
++    LogLayoutTree(object, layout_tree_array.get());
++    tree_json->SetArray("layout_tree", std::move(layout_tree_array));
++    LOG(ERROR) << "LAYOUT_TREE: " << tree_json->ToJSONString().Utf8();
++  }
++
+   bool selection_drag_image_only =
+       paint_flags & PaintFlag::kSelectionDragImageOnly;
+-  if (selection_drag_image_only && !object.IsSelected())
++  if (selection_drag_image_only && !object.IsSelected()) {
+     return kFullyPainted;
++  }
+ 
+   IgnorePaintTimingScope ignore_paint_timing;
+   if (object.StyleRef().Opacity() == 0.0f) {
+@@ -344,8 +432,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
+     gfx::Rect visual_rect = FirstFragmentVisualRect(object);
+     gfx::Rect cull_rect = object.FirstFragment().GetCullRect().Rect();
+     bool cull_rect_intersects_self = cull_rect.Intersects(visual_rect);
+-    if (!cull_rect.Contains(visual_rect))
++    if (!cull_rect.Contains(visual_rect)) {
+       result = kMayBeClippedByCullRect;
++    }
+ 
+     bool cull_rect_intersects_contents = true;
+     if (const auto* box = DynamicTo<LayoutBox>(object)) {
+@@ -355,8 +444,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
+           object.FirstFragment().GetContentsCullRect().Rect());
+       cull_rect_intersects_contents =
+           contents_cull_rect.Intersects(contents_visual_rect);
+-      if (!contents_cull_rect.Contains(contents_visual_rect))
++      if (!contents_cull_rect.Contains(contents_visual_rect)) {
+         result = kMayBeClippedByCullRect;
++      }
+     } else {
+       cull_rect_intersects_contents = cull_rect_intersects_self;
+     }
+@@ -391,8 +481,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
+   PaintController& controller = context.GetPaintController();
+ 
+   std::optional<ScopedEffectivelyInvisible> effectively_invisible;
+-  if (PaintedOutputInvisible(object.StyleRef()))
++  if (PaintedOutputInvisible(object.StyleRef())) {
+     effectively_invisible.emplace(controller);
++  }
+ 
+   std::optional<ScopedPaintChunkProperties> layer_chunk_properties;
+ 
+@@ -433,8 +524,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
+   }
+ 
+   if (PaintChildren(kNegativeZOrderChildren, context, paint_flags) ==
+-      kMayBeClippedByCullRect)
++      kMayBeClippedByCullRect) {
+     result = kMayBeClippedByCullRect;
++  }
+ 
+   if (should_paint_content) {
+     // If the negative-z-order children created paint chunks, this gives the
+@@ -455,18 +547,21 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
+       is_self_painting_layer && object.StyleRef().HasOutline();
+ 
+   bool is_video = IsA<LayoutVideo>(object);
+-  if (!is_video && should_paint_self_outline)
++  if (!is_video && should_paint_self_outline) {
+     PaintWithPhase(PaintPhase::kSelfOutlineOnly, context, paint_flags);
++  }
+ 
+   if (PaintChildren(kNormalFlowAndPositiveZOrderChildren, context,
+-                    paint_flags) == kMayBeClippedByCullRect)
++                    paint_flags) == kMayBeClippedByCullRect) {
+     result = kMayBeClippedByCullRect;
++  }
+ 
+   if (should_paint_content && paint_layer_.GetScrollableArea() &&
+       paint_layer_.GetScrollableArea()
+           ->ShouldOverflowControlsPaintAsOverlay()) {
+-    if (!paint_layer_.NeedsReorderOverlayOverflowControls())
++    if (!paint_layer_.NeedsReorderOverlayOverflowControls()) {
+       PaintOverlayOverflowControls(context, paint_flags);
++    }
+     // Otherwise the overlay overflow controls will be painted after scrolling
+     // children in PaintChildren().
+   }
+@@ -488,8 +583,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
+           PaintWithPhase(PaintPhase::kMask, context, paint_flags);
+         }
+       }
+-      if (properties->ClipPathMask())
++      if (properties->ClipPathMask()) {
+         ClipPathClipper::PaintClipPathAsMaskImage(context, object, object);
++      }
+     }
+     if (PaintTransitionPseudos(context, object, paint_flags) ==
+         kMayBeClippedByCullRect) {
+@@ -564,8 +660,9 @@ PaintResult PaintLayerPainter::PaintChildren(
+     GraphicsContext& context,
+     PaintFlags paint_flags) {
+   PaintResult result = kFullyPainted;
+-  if (!paint_layer_.HasSelfPaintingLayerDescendant())
++  if (!paint_layer_.HasSelfPaintingLayerDescendant()) {
+     return result;
++  }
+ 
+   LayoutObject& layout_object = paint_layer_.GetLayoutObject();
+   if (layout_object.ChildPaintBlockedByDisplayLock()) {
+@@ -579,8 +676,9 @@ PaintResult PaintLayerPainter::PaintChildren(
+ 
+   PaintLayerPaintOrderIterator iterator(&paint_layer_, children_to_visit);
+   while (PaintLayer* child = iterator.Next()) {
+-    if (child->IsReplacedNormalFlowStacking())
++    if (child->IsReplacedNormalFlowStacking()) {
+       continue;
++    }
+ 
+     if (!layout_object.IsViewTransitionRoot() &&
+         ViewTransitionUtils::IsViewTransitionRoot(child->GetLayoutObject())) {
+@@ -591,8 +689,9 @@ PaintResult PaintLayerPainter::PaintChildren(
+     }
+ 
+     if (PaintLayerPainter(*child).Paint(context, paint_flags) ==
+-        kMayBeClippedByCullRect)
++        kMayBeClippedByCullRect) {
+       result = kMayBeClippedByCullRect;
++    }
+ 
+     if (const auto* layers_painting_overlay_overflow_controls_after =
+             iterator.LayersPaintingOverlayOverflowControlsAfter(child)) {
+@@ -632,8 +731,9 @@ void PaintLayerPainter::PaintFragmentWithPhase(
+          phase == PaintPhase::kOverlayOverflowControls);
+ 
+   CullRect cull_rect = fragment_data.GetCullRect();
+-  if (cull_rect.Rect().IsEmpty())
++  if (cull_rect.Rect().IsEmpty()) {
+     return;
++  }
+ 
+   auto chunk_properties = fragment_data.LocalBorderBoxProperties();
+   if (phase == PaintPhase::kMask) {
+@@ -691,14 +791,16 @@ void PaintLayerPainter::PaintWithPhase(PaintPhase phase,
+     }
+ 
+     std::optional<ScopedDisplayItemFragment> scoped_display_item_fragment;
+-    if (fragment_idx)
++    if (fragment_idx) {
+       scoped_display_item_fragment.emplace(context, fragment_idx);
++    }
+ 
+     PaintFragmentWithPhase(phase, fragment, fragment_idx, physical_fragment,
+                            context, paint_flags);
+ 
+-    if (!multiple_fragments_allowed)
++    if (!multiple_fragments_allowed) {
+       break;
++    }
+ 
+     fragment_idx++;
+   }
 diff --git a/third_party/blink/renderer/platform/BUILD.gn b/third_party/blink/renderer/platform/BUILD.gn
 index e2256766d7..414407b3a8 100644
 --- a/third_party/blink/renderer/platform/BUILD.gn
