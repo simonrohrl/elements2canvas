@@ -84,7 +84,9 @@ class TextPainter {
       float descent,
       const GraphicsStateIds& state_ids,
       const std::optional<std::vector<ShadowData>>& shadows = std::nullopt,
-      float scaling_factor = 1.0f);
+      float scaling_factor = 1.0f,
+      std::optional<float> font_underline_position = std::nullopt,
+      std::optional<float> font_underline_thickness = std::nullopt);
 
   // Paint line-through decorations - uses TextDecorationPainter
   static void PaintDecorationsLineThrough(
@@ -96,7 +98,9 @@ class TextPainter {
       float descent,
       const GraphicsStateIds& state_ids,
       const std::optional<std::vector<ShadowData>>& shadows = std::nullopt,
-      float scaling_factor = 1.0f);
+      float scaling_factor = 1.0f,
+      std::optional<float> font_underline_position = std::nullopt,
+      std::optional<float> font_underline_thickness = std::nullopt);
 
   // Paint text shadows
   static void PaintShadows(PaintOpList& ops,

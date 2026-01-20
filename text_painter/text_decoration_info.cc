@@ -38,7 +38,9 @@ TextDecorationInfo::TextDecorationInfo(
     float ascent,
     float descent,
     const std::vector<TextDecoration>& decorations,
-    float scaling_factor)
+    float scaling_factor,
+    std::optional<float> font_underline_position,
+    std::optional<float> font_underline_thickness)
     : local_origin_x_(local_origin_x),
       local_origin_y_(local_origin_y),
       width_(width),
@@ -46,7 +48,9 @@ TextDecorationInfo::TextDecorationInfo(
       ascent_(ascent),
       descent_(descent),
       decorations_(decorations),
-      scaling_factor_(scaling_factor) {
+      scaling_factor_(scaling_factor),
+      font_underline_position_(font_underline_position),
+      font_underline_thickness_(font_underline_thickness) {
   // Compute union of all lines across all decorations
   for (const auto& decoration : decorations_) {
     union_all_lines_ = union_all_lines_ | decoration.line;
@@ -86,9 +90,25 @@ void TextDecorationInfo::UpdateForDecorationIndex() {
 
 float TextDecorationInfo::ComputeThickness() const {
   if (decoration_index_ >= decorations_.size()) {
+    // Fall back to font-supplied thickness or auto
+    if (font_underline_thickness_) {
+      return *font_underline_thickness_;
+    }
     return font_size_ / 10.f;
   }
   const TextDecoration& decoration = decorations_[decoration_index_];
+
+  // If decoration has explicit thickness, use it
+  if (decoration.thickness > 0) {
+    return ComputeDecorationThickness(decoration.thickness, font_size_);
+  }
+
+  // Otherwise, try font-supplied thickness
+  if (font_underline_thickness_) {
+    return *font_underline_thickness_;
+  }
+
+  // Fall back to auto thickness
   return ComputeDecorationThickness(decoration.thickness, font_size_);
 }
 
@@ -136,8 +156,21 @@ void TextDecorationInfo::SetUnderlineLineData() {
   }
 
   // Compute underline offset
-  // Default: below the baseline by a small amount plus the decoration offset
-  float underline_offset = descent_;
+  // Priority:
+  // 1. Font-supplied underline position (if available)
+  // 2. CSS underline-offset adjustment
+  // 3. Default: descent (below baseline)
+  float underline_offset;
+
+  if (font_underline_position_) {
+    // Font provides underline position (distance from baseline, positive = below)
+    underline_offset = *font_underline_position_;
+  } else {
+    // Default: position at descent
+    underline_offset = descent_;
+  }
+
+  // Add CSS text-underline-offset if specified
   if (decoration_index_ < decorations_.size()) {
     underline_offset += decorations_[decoration_index_].underline_offset;
   }

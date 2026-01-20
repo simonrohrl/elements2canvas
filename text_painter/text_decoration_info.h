@@ -39,7 +39,9 @@ class TextDecorationInfo {
                      float ascent,
                      float descent,
                      const std::vector<TextDecoration>& decorations,
-                     float scaling_factor = 1.0f);
+                     float scaling_factor = 1.0f,
+                     std::optional<float> font_underline_position = std::nullopt,
+                     std::optional<float> font_underline_thickness = std::nullopt);
 
   size_t DecorationCount() const { return decorations_.size(); }
   const TextDecoration& GetDecoration(size_t index) const {
@@ -97,6 +99,8 @@ class TextDecorationInfo {
   float descent_;
   std::vector<TextDecoration> decorations_;
   float scaling_factor_;
+  std::optional<float> font_underline_position_;
+  std::optional<float> font_underline_thickness_;
 
   // Cached state for current decoration
   size_t decoration_index_ = 0;

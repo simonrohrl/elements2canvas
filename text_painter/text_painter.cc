@@ -158,12 +158,15 @@ void TextPainter::PaintDecorationsExceptLineThrough(
     float descent,
     const GraphicsStateIds& state_ids,
     const std::optional<std::vector<ShadowData>>& shadows,
-    float scaling_factor) {
+    float scaling_factor,
+    std::optional<float> font_underline_position,
+    std::optional<float> font_underline_thickness) {
   if (decorations.empty()) return;
 
   TextDecorationPainter painter(ops, state_ids, box.x, box.y, box.width,
                                 font_size, ascent, descent, decorations,
-                                shadows, scaling_factor);
+                                shadows, scaling_factor,
+                                font_underline_position, font_underline_thickness);
   painter.PaintExceptLineThrough();
 }
 
@@ -176,12 +179,15 @@ void TextPainter::PaintDecorationsLineThrough(
     float descent,
     const GraphicsStateIds& state_ids,
     const std::optional<std::vector<ShadowData>>& shadows,
-    float scaling_factor) {
+    float scaling_factor,
+    std::optional<float> font_underline_position,
+    std::optional<float> font_underline_thickness) {
   if (decorations.empty()) return;
 
   TextDecorationPainter painter(ops, state_ids, box.x, box.y, box.width,
                                 font_size, ascent, descent, decorations,
-                                shadows, scaling_factor);
+                                shadows, scaling_factor,
+                                font_underline_position, font_underline_thickness);
   painter.PaintOnlyLineThrough();
 }
 
@@ -314,10 +320,14 @@ PaintOpList TextPainter::Paint(const TextPaintInput& input) {
   float font_size = 16.0f;
   float ascent = 14.0f;
   float descent = 4.0f;
+  std::optional<float> font_underline_position;
+  std::optional<float> font_underline_thickness;
   if (!shape.runs.empty()) {
     font_size = shape.runs[0].font.size;
     ascent = shape.runs[0].font.ascent;
     descent = shape.runs[0].font.descent;
+    font_underline_position = shape.runs[0].font.underline_position;
+    font_underline_thickness = shape.runs[0].font.underline_thickness;
   }
 
   // === Paint decorations (except line-through) ===
@@ -325,7 +335,8 @@ PaintOpList TextPainter::Paint(const TextPaintInput& input) {
     PaintDecorationsExceptLineThrough(ops, input.decorations, input.box,
                                       font_size, ascent, descent,
                                       input.state_ids, effective_style.shadow,
-                                      scaling_factor);
+                                      scaling_factor,
+                                      font_underline_position, font_underline_thickness);
   }
 
   // === Paint text ===
@@ -360,7 +371,8 @@ PaintOpList TextPainter::Paint(const TextPaintInput& input) {
     PaintDecorationsLineThrough(ops, input.decorations, input.box,
                                 font_size, ascent, descent,
                                 input.state_ids, effective_style.shadow,
-                                scaling_factor);
+                                scaling_factor,
+                                font_underline_position, font_underline_thickness);
   }
 
   // === Paint emphasis marks ===

@@ -357,6 +357,11 @@ struct FontInfo {
   // For computing text origin
   float ascent = 0.0f;
   float descent = 0.0f;
+
+  // Font-supplied underline metrics (optional)
+  // When provided, these come from the font's OS/2 or post tables
+  std::optional<float> underline_position;   // Distance from baseline (positive = below)
+  std::optional<float> underline_thickness;  // Thickness of underline
 };
 
 // A single glyph run from HarfBuzz shaping

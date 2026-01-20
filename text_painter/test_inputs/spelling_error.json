@@ -1,0 +1,67 @@
+{
+  "fragment": {
+    "text": "mispeled word",
+    "from": 0,
+    "to": 13,
+    "shape_result": {
+      "width": 100.0,
+      "bounds": {"x": 0, "y": -14, "width": 100, "height": 18},
+      "runs": [{
+        "font": {
+          "family": "Arial",
+          "size": 16.0,
+          "weight": 400,
+          "width": 5,
+          "slant": 0,
+          "typeface_id": "arial-regular",
+          "ascent": 14.0,
+          "descent": 4.0,
+          "scale_x": 1.0,
+          "skew_x": 0.0,
+          "embolden": false,
+          "linear_metrics": false,
+          "subpixel": true,
+          "force_auto_hinting": false
+        },
+        "glyphs": [80, 76, 86, 83, 72, 79, 72, 71, 3, 90, 82, 85, 71],
+        "positioning": "relative",
+        "offset_x": 0.0,
+        "offset_y": 0.0,
+        "positions": [0, 8, 12, 18, 25, 30, 35, 40, 46, 52, 60, 66, 72]
+      }]
+    }
+  },
+  "box": {"x": 50.0, "y": 100.0, "width": 100.0, "height": 18.0},
+  "style": {
+    "current_color": {"r": 0, "g": 0, "b": 0, "a": 255},
+    "fill_color": {"r": 33, "g": 33, "b": 33, "a": 255},
+    "stroke_color": {"r": 0, "g": 0, "b": 0, "a": 0},
+    "emphasis_mark_color": {"r": 33, "g": 33, "b": 33, "a": 255},
+    "stroke_width": 0.0,
+    "paint_order": "normal"
+  },
+  "paint_phase": "foreground",
+  "node_id": 102,
+  "state_ids": {
+    "transform_id": 1,
+    "clip_id": 2,
+    "effect_id": 3
+  },
+  "visibility": "visible",
+  "writing_mode": "horizontal-tb",
+  "is_horizontal": true,
+  "decorations": [
+    {
+      "line": "spelling-error",
+      "style": "wavy",
+      "color": "#ffff0000",
+      "thickness": 1.0
+    }
+  ],
+  "dark_mode": {
+    "enabled": false
+  },
+  "is_ellipsis": false,
+  "is_line_break": false,
+  "is_flow_control": false
+}

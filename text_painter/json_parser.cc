@@ -251,6 +251,14 @@ GlyphRun JsonParser::ParseGlyphRun(const std::string& json) {
     run.font.typeface_id = ExtractInt(font_json, "typefaceId", 0);
     run.font.ascent = ExtractFloat(font_json, "ascent", 0.0f);
     run.font.descent = ExtractFloat(font_json, "descent", 0.0f);
+
+    // Optional font-supplied underline metrics
+    if (!IsNull(font_json, "underline_position")) {
+      run.font.underline_position = ExtractFloat(font_json, "underline_position", 0.0f);
+    }
+    if (!IsNull(font_json, "underline_thickness")) {
+      run.font.underline_thickness = ExtractFloat(font_json, "underline_thickness", 0.0f);
+    }
   }
 
   // Parse glyphs
@@ -390,6 +398,10 @@ bool JsonParser::ParseInput(const std::string& json, TextPaintInput& output) {
         decoration.line = TextDecorationLine::kOverline;
       } else if (line_str == "line-through") {
         decoration.line = TextDecorationLine::kLineThrough;
+      } else if (line_str == "spelling-error") {
+        decoration.line = TextDecorationLine::kSpellingError;
+      } else if (line_str == "grammar-error") {
+        decoration.line = TextDecorationLine::kGrammarError;
       }
 
       std::string style_str = ExtractString(dec_json, "style");
@@ -694,6 +706,10 @@ std::string JsonParser::SerializeOps(const PaintOpList& ops) {
                 << "    \"offsetY\": " << arg.offset_y << ",\n"
                 << "    \"blurSigma\": " << arg.blur_sigma << ",\n"
                 << "    \"color\": \"" << arg.color.ToHex() << "\"\n"
+                << "  }";
+          } else if constexpr (std::is_same_v<T, ClearShadowOp>) {
+            oss << "  {\n"
+                << "    \"type\": \"ClearShadowOp\"\n"
                 << "  }";
           } else if constexpr (std::is_same_v<T, DrawTextBlobOp>) {
             oss << "  {\n"

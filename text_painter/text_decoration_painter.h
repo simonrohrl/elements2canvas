@@ -41,7 +41,9 @@ class TextDecorationPainter {
                         float descent,
                         const std::vector<TextDecoration>& decorations,
                         const std::optional<std::vector<ShadowData>>& shadows = std::nullopt,
-                        float scaling_factor = 1.0f);
+                        float scaling_factor = 1.0f,
+                        std::optional<float> font_underline_position = std::nullopt,
+                        std::optional<float> font_underline_thickness = std::nullopt);
 
   // Paint all decorations except line-through
   // (underlines/overlines should be painted before text)

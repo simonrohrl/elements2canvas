@@ -1,0 +1,42 @@
+# Makefile for building text_painter as WebAssembly using Emscripten
+#
+# Prerequisites:
+#   - Emscripten SDK installed and activated (source emsdk_env.sh)
+#
+# Usage:
+#   make -f Makefile.wasm        # Build WASM module
+#   make -f Makefile.wasm clean  # Clean build artifacts
+
+EMCC = emcc
+
+# Emscripten flags
+EMFLAGS = -std=c++17 -O2 \
+          -s WASM=1 \
+          -s MODULARIZE=1 \
+          -s EXPORT_ES6=1 \
+          -s EXPORTED_FUNCTIONS='["_paint_text", "_malloc", "_free"]' \
+          -s EXPORTED_RUNTIME_METHODS='["ccall", "cwrap", "UTF8ToString", "stringToUTF8", "lengthBytesUTF8"]' \
+          -s ALLOW_MEMORY_GROWTH=1 \
+          -s ENVIRONMENT='web' \
+          -I.
+
+# Debug build (uncomment for debugging)
+# EMFLAGS += -g -s ASSERTIONS=1
+
+# Source files (excluding main.cc, using main_wasm.cc instead)
+SRCS = main_wasm.cc text_painter.cc json_parser.cc \
+       decoration_line_painter.cc text_decoration_info.cc text_decoration_painter.cc
+
+# Output files
+TARGET = text_painter.js
+TARGET_WASM = text_painter.wasm
+
+all: $(TARGET)
+
+$(TARGET): $(SRCS)
+	$(EMCC) $(EMFLAGS) -o $@ $^
+
+clean:
+	rm -f $(TARGET) $(TARGET_WASM)
+
+.PHONY: all clean

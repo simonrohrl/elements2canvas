@@ -25,13 +25,16 @@ TextDecorationPainter::TextDecorationPainter(
     float descent,
     const std::vector<TextDecoration>& decorations,
     const std::optional<std::vector<ShadowData>>& shadows,
-    float scaling_factor)
+    float scaling_factor,
+    std::optional<float> font_underline_position,
+    std::optional<float> font_underline_thickness)
     : ops_(ops),
       state_ids_(state_ids),
       decorations_(decorations),
       shadows_(shadows),
       decoration_info_(local_origin_x, local_origin_y, width, font_size,
-                       ascent, descent, decorations, scaling_factor) {}
+                       ascent, descent, decorations, scaling_factor,
+                       font_underline_position, font_underline_thickness) {}
 
 Color TextDecorationPainter::LineColorForPhase(TextShadowPaintPhase phase) const {
   // In shadow phase, use black for proper shadow masking
