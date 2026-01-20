@@ -953,7 +953,7 @@ new file mode 100644
 index 0000000000..e69de29bb2
 diff --git a/third_party/blink/renderer/platform/graphics/paint/paint_artifact_serializer.cc b/third_party/blink/renderer/platform/graphics/paint/paint_artifact_serializer.cc
 new file mode 100644
-index 0000000000..dede1de7fb
+index 0000000000..114a4e63f3
 --- /dev/null
 +++ b/third_party/blink/renderer/platform/graphics/paint/paint_artifact_serializer.cc
 @@ -0,0 +1,605 @@
@@ -1106,23 +1106,23 @@ index 0000000000..dede1de7fb
 +  }
 +
 +  // Handle path effect (dash patterns for dotted/dashed outlines)
-+  if (const auto& path_effect = flags.getPathEffect()) {
-+    // Convert to SkPaint to get access to SkPathEffect
-+    SkPaint sk_paint = flags.ToSkPaint();
-+    sk_sp<SkPathEffect> sk_effect = sk_paint.refPathEffect();
-+    if (sk_effect) {
-+      auto* effect_base = static_cast<SkPathEffectBase*>(sk_effect.get());
-+      auto dash_info = effect_base->asADash();
-+      if (dash_info.has_value()) {
-+        auto dash_json = std::make_unique<JSONObject>();
-+        auto intervals_array = std::make_unique<JSONArray>();
-+        for (size_t i = 0; i < dash_info->fIntervals.size(); ++i) {
-+          intervals_array->PushDouble(dash_info->fIntervals[i]);
-+        }
-+        dash_json->SetArray("intervals", std::move(intervals_array));
-+        dash_json->SetDouble("phase", dash_info->fPhase);
-+        json->SetObject("dashPattern", std::move(dash_json));
++  // Note: flags.getPathEffect() returns a cc::PaintPathEffect wrapper
++  // We need to convert to SkPaint to access the underlying SkPathEffect
++  SkPaint sk_paint = flags.ToSkPaint();
++  sk_sp<SkPathEffect> sk_effect = sk_paint.refPathEffect();
++  if (sk_effect) {
++    json->SetBoolean("hasPathEffect", true);
++    auto* effect_base = static_cast<SkPathEffectBase*>(sk_effect.get());
++    auto dash_info = effect_base->asADash();
++    if (dash_info.has_value() && dash_info->fIntervals.size() > 0) {
++      auto dash_json = std::make_unique<JSONObject>();
++      auto intervals_array = std::make_unique<JSONArray>();
++      for (size_t i = 0; i < dash_info->fIntervals.size(); ++i) {
++        intervals_array->PushDouble(dash_info->fIntervals[i]);
 +      }
++      dash_json->SetArray("intervals", std::move(intervals_array));
++      dash_json->SetDouble("phase", dash_info->fPhase);
++      json->SetObject("dashPattern", std::move(dash_json));
 +    }
 +  }
 +
