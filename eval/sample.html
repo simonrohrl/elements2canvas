@@ -6,6 +6,8 @@
     body {
         margin: 20px;
         background: #f0f0f0;
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
     }
 
     * {
@@ -16,7 +18,7 @@
     .card {
         background: white;
         border-radius: 12px;
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 1);
         padding: 20px;
         margin-bottom: 20px;
         max-width: 400px;
@@ -249,71 +251,6 @@
         color: white;
     }
 
-    /* Navigation bar */
-    .navbar {
-        background: linear-gradient(180deg, #2c3e50 0%, #1a252f 100%);
-        padding: 12px 20px;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        border-radius: 8px;
-        margin-bottom: 20px;
-    }
-    .navbar .logo {
-        font-size: 18px;
-        font-weight: bold;
-        color: white;
-    }
-    .navbar .nav-links {
-        display: flex;
-        gap: 20px;
-    }
-    .navbar .nav-links a {
-        color: #bdc3c7;
-        text-decoration: none;
-        font-size: 14px;
-        padding: 5px 10px;
-        border-radius: 4px;
-        transition: background 0.2s;
-    }
-    .navbar .nav-links a:hover,
-    .navbar .nav-links a.active {
-        background: rgba(255, 255, 255, 0.1);
-        color: white;
-    }
-
-    /* Hero section with gradient overlay */
-    .hero {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 50%, #f093fb 100%);
-        border-radius: 12px;
-        padding: 40px;
-        color: white;
-        text-align: center;
-        margin-bottom: 20px;
-        position: relative;
-        overflow: hidden;
-    }
-    .hero h1 {
-        font-size: 28px;
-        margin: 0 0 10px 0;
-        text-shadow: 0 2px 4px rgba(0,0,0,0.2);
-    }
-    .hero p {
-        font-size: 16px;
-        opacity: 0.9;
-        margin: 0 0 20px 0;
-    }
-    .hero .cta-button {
-        background: white;
-        color: #667eea;
-        border: none;
-        padding: 12px 30px;
-        border-radius: 25px;
-        font-size: 14px;
-        font-weight: bold;
-        cursor: pointer;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.2);
-    }
 
     /* Data table */
     .data-table {
@@ -463,24 +400,6 @@
         padding: 6px 0;
         border-bottom: 1px solid #ecf0f1;
     }
-
-    /* Breadcrumbs */
-    .breadcrumbs {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        font-size: 13px;
-        color: #7f8c8d;
-        margin: 10px 0;
-    }
-    .breadcrumbs a {
-        color: #3498db;
-        text-decoration: none;
-    }
-    .breadcrumbs .separator {
-        color: #bdc3c7;
-    }
-
     /* Tooltip style */
     .tooltip-demo {
         position: relative;
@@ -570,12 +489,6 @@
     }
 
     /* Stats cards */
-    .stats-grid {
-        display: grid;
-        grid-template-columns: repeat(3, 1fr);
-        gap: 15px;
-        margin: 15px 0;
-    }
     .stat-card {
         background: white;
         border-radius: 8px;
@@ -1280,55 +1193,6 @@
 </script>
 
 <body>
-    <!-- Navigation bar -->
-    <nav class="navbar">
-        <div class="logo">WebApp</div>
-        <div class="nav-links">
-            <a href="#" class="active">Dashboard</a>
-            <a href="#">Products</a>
-            <a href="#">Settings</a>
-            <a href="#">Help</a>
-        </div>
-    </nav>
-
-    <!-- Hero section -->
-    <div class="hero">
-        <h1>Welcome to the Platform</h1>
-        <p>Build amazing products with our comprehensive toolkit</p>
-        <button class="cta-button">Get Started Free</button>
-    </div>
-
-    <!-- Breadcrumbs -->
-    <div class="breadcrumbs">
-        <a href="#">Home</a>
-        <span class="separator">/</span>
-        <a href="#">Dashboard</a>
-        <span class="separator">/</span>
-        <span>Overview</span>
-    </div>
-
-    <!-- Stats grid -->
-    <div class="stats-grid">
-        <div class="stat-card gradient-1">
-            <div class="stat-value">2,847</div>
-            <div class="stat-label">Total Users</div>
-        </div>
-        <div class="stat-card gradient-2">
-            <div class="stat-value">$12.4k</div>
-            <div class="stat-label">Revenue</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-value">94.2%</div>
-            <div class="stat-label">Success Rate</div>
-        </div>
-    </div>
-
-    <!-- Alert boxes -->
-    <div class="alert alert-info">Information: Your account has been updated successfully.</div>
-    <div class="alert alert-success">Success: Payment processed and confirmed.</div>
-    <div class="alert alert-warning">Warning: Your subscription expires in 3 days.</div>
-    <div class="alert alert-error">Error: Failed to connect to the server.</div>
-
     <!-- Main card container -->
     <div class="card">
         <h2>Complex UI Demo</h2>

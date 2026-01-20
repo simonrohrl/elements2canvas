@@ -1,18 +1,55 @@
-diff --git a/third_party/blink/renderer/platform/BUILD.gn b/third_party/blink/renderer/platform/BUILD.gn
-index e2256766d7..351700eb0b 100644
---- a/third_party/blink/renderer/platform/BUILD.gn
-+++ b/third_party/blink/renderer/platform/BUILD.gn
-@@ -920,6 +920,8 @@ component("platform") {
-     "graphics/compositing/layers_as_json.h",
-     "graphics/compositing/paint_artifact_compositor.cc",
-     "graphics/compositing/paint_artifact_compositor.h",
-+    "graphics/compositing/paint_artifact_json_serializer.cc",
-+    "graphics/compositing/paint_artifact_json_serializer.h",
-     "graphics/compositing/paint_chunks_to_cc_layer.cc",
-     "graphics/compositing/paint_chunks_to_cc_layer.h",
-     "graphics/compositing/pending_layer.cc",
+diff --git a/cc/paint/draw_looper.h b/cc/paint/draw_looper.h
+index c04a907ff8..5c977caf3e 100644
+--- a/cc/paint/draw_looper.h
++++ b/cc/paint/draw_looper.h
+@@ -36,6 +36,18 @@ class CC_PAINT_EXPORT DrawLooper : public SkRefCnt {
+     kDontModifyPaintFlag = 1 << 2,
+   };
+ 
++  // Layer struct (moved to public for JSON serialization access)
++  struct Layer {
++    SkPoint offset;
++    float blur_sigma;
++    SkColor4f color;
++    uint32_t flags;
++
++    bool operator==(const Layer& other) const = default;
++
++    void Apply(SkCanvas* canvas, SkPaint* paint) const;
++  };
++
+   ~DrawLooper() override;
+ 
+   //  The callback will be invoked for each "layer" in the looper, each time
+@@ -64,6 +76,9 @@ class CC_PAINT_EXPORT DrawLooper : public SkRefCnt {
+ 
+   bool EqualsForTesting(const DrawLooper& other) const;
+ 
++  // Public accessor for JSON serialization
++  const std::vector<Layer>& GetLayers() const { return layers_; }
++
+  private:
+   // Keep this in sync with the fields in Flags
+   // Used to mask out illegal bits when constructing Layer
+@@ -72,16 +87,6 @@ class CC_PAINT_EXPORT DrawLooper : public SkRefCnt {
+         kPostTransformFlag | kOverrideAlphaFlag | kDontModifyPaintFlag,
+   };
+ 
+-  struct Layer {
+-    SkPoint offset;
+-    float blur_sigma;
+-    SkColor4f color;
+-    uint32_t flags;
+-
+-    bool operator==(const Layer& other) const = default;
+-
+-    void Apply(SkCanvas* canvas, SkPaint* paint) const;
+-  };
+   std::vector<Layer> layers_;
+ 
+   explicit DrawLooper(std::vector<Layer> l);
 diff --git a/third_party/blink/renderer/platform/graphics/compositing/paint_artifact_compositor.cc b/third_party/blink/renderer/platform/graphics/compositing/paint_artifact_compositor.cc
-index d52098547f..a6dd131966 100644
+index d52098547f..b8f2fa5a22 100644
 --- a/third_party/blink/renderer/platform/graphics/compositing/paint_artifact_compositor.cc
 +++ b/third_party/blink/renderer/platform/graphics/compositing/paint_artifact_compositor.cc
 @@ -5,6 +5,7 @@
@@ -23,7 +60,21 @@ index d52098547f..a6dd131966 100644
  #include <memory>
  #include <utility>
  
-@@ -1160,6 +1161,15 @@ void PaintArtifactCompositor::Update(
+@@ -1021,6 +1022,13 @@ void PaintArtifactCompositor::Update(
+   OldPendingLayerMatcher old_pending_layer_matcher(std::move(pending_layers_));
+   CHECK(painted_scroll_translations_.empty());
+ 
++  // Log raw PaintArtifact BEFORE layerization
++  auto paint_artifact_json = SerializePaintArtifact(artifact);
++  auto paint_artifact_props_json = SerializePaintArtifactPropertyTrees(artifact);
++  LOG(ERROR) << "PAINT_ARTIFACT: " << paint_artifact_json->ToJSONString().Utf8();
++  LOG(ERROR) << "PAINT_ARTIFACT_PROPERTY_TREES: "
++             << paint_artifact_props_json->ToJSONString().Utf8();
++
+   // Make compositing decisions, storing the result in |pending_layers_|.
+   pending_layers_ = Layerizer(*this, artifact, old_size).Layerize();
+   PendingLayer::DecompositeTransforms(pending_layers_);
+@@ -1160,6 +1168,19 @@ void PaintArtifactCompositor::Update(
             << GetLayersAsJSON(VLOG_IS_ON(3) ? 0xffffffff : 0)
                    ->ToPrettyJSONString()
                    .Utf8();
@@ -36,470 +87,296 @@ index d52098547f..a6dd131966 100644
 +  LOG(ERROR) << "BLINK_LAYERS: " << blink_layers_json->ToJSONString().Utf8();
 +  LOG(ERROR) << "BLINK_PROPERTY_TREES: "
 +             << blink_property_trees_json->ToJSONString().Utf8();
++
++  // Log raw paint ops WITHOUT chunk grouping - flat list in paint order
++  auto raw_paint_ops_json = SerializeRawPaintOps(artifact);
++  LOG(ERROR) << "RAW_PAINT_OPS: " << raw_paint_ops_json->ToJSONString().Utf8();
  }
  
  bool PaintArtifactCompositor::TryFastPathUpdate(
 diff --git a/third_party/blink/renderer/platform/graphics/compositing/paint_artifact_json_serializer.cc b/third_party/blink/renderer/platform/graphics/compositing/paint_artifact_json_serializer.cc
-new file mode 100644
-index 0000000000..7282912e5b
---- /dev/null
+index 7282912e5b..0161e2eeb1 100644
+--- a/third_party/blink/renderer/platform/graphics/compositing/paint_artifact_json_serializer.cc
 +++ b/third_party/blink/renderer/platform/graphics/compositing/paint_artifact_json_serializer.cc
-@@ -0,0 +1,662 @@
-+// Copyright 2024 The Chromium Authors
-+// Use of this source code is governed by a BSD-style license that can be
-+// found in the LICENSE file.
-+
-+#include "third_party/blink/renderer/platform/graphics/compositing/paint_artifact_json_serializer.h"
-+
-+#include <unordered_map>
-+
-+#include "base/compiler_specific.h"
-+#include "cc/paint/paint_op.h"
-+#include "cc/paint/paint_op_buffer_iterator.h"
-+#include "third_party/blink/renderer/platform/allow_discouraged_type.h"
-+#include "third_party/blink/renderer/platform/graphics/compositing/pending_layer.h"
-+#include "third_party/blink/renderer/platform/graphics/paint/clip_paint_property_node.h"
-+#include "third_party/blink/renderer/platform/graphics/paint/drawing_display_item.h"
-+#include "third_party/blink/renderer/platform/graphics/paint/effect_paint_property_node.h"
-+#include "third_party/blink/renderer/platform/graphics/paint/paint_artifact.h"
-+#include "third_party/blink/renderer/platform/graphics/paint/paint_chunk_subset.h"
-+#include "third_party/blink/renderer/platform/graphics/paint/transform_paint_property_node.h"
-+#include "third_party/blink/renderer/platform/json/json_values.h"
-+#include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
-+#include "third_party/skia/include/core/SkPath.h"
-+#include "third_party/skia/include/core/SkTextBlob.h"
-+#include "third_party/skia/include/utils/SkParsePath.h"
-+#include "ui/gfx/geometry/transform.h"
-+
-+namespace blink {
-+
-+namespace {
-+
-+// Helper to serialize color from SkColor4f
-+std::unique_ptr<JSONObject> SerializeColor(const SkColor4f& color) {
-+  auto json = std::make_unique<JSONObject>();
-+  json->SetDouble("r", color.fR);
-+  json->SetDouble("g", color.fG);
-+  json->SetDouble("b", color.fB);
-+  json->SetDouble("a", color.fA);
-+  return json;
-+}
-+
-+// Helper to serialize a rect as array [left, top, right, bottom]
-+std::unique_ptr<JSONArray> SerializeRectLTRB(const SkRect& rect) {
-+  auto json = std::make_unique<JSONArray>();
-+  json->PushDouble(rect.left());
-+  json->PushDouble(rect.top());
-+  json->PushDouble(rect.right());
-+  json->PushDouble(rect.bottom());
-+  return json;
-+}
-+
-+// Helper to serialize gfx::Rect
-+std::unique_ptr<JSONArray> SerializeGfxRect(const gfx::Rect& rect) {
-+  auto json = std::make_unique<JSONArray>();
-+  json->PushInteger(rect.x());
-+  json->PushInteger(rect.y());
-+  json->PushInteger(rect.width());
-+  json->PushInteger(rect.height());
-+  return json;
-+}
-+
-+// Helper to serialize gfx::RectF
-+std::unique_ptr<JSONArray> SerializeGfxRectF(const gfx::RectF& rect) {
-+  auto json = std::make_unique<JSONArray>();
-+  json->PushDouble(rect.x());
-+  json->PushDouble(rect.y());
-+  json->PushDouble(rect.width());
-+  json->PushDouble(rect.height());
-+  return json;
-+}
-+
-+// Helper to serialize a 4x4 matrix from SkM44
-+std::unique_ptr<JSONArray> SerializeSkM44(const SkM44& matrix) {
-+  auto json = std::make_unique<JSONArray>();
-+  for (int row = 0; row < 4; ++row) {
-+    for (int col = 0; col < 4; ++col) {
-+      json->PushDouble(matrix.rc(row, col));
+@@ -7,6 +7,8 @@
+ #include <unordered_map>
+ 
+ #include "base/compiler_specific.h"
++#include "cc/paint/draw_looper.h"
++#include "cc/paint/paint_filter.h"
+ #include "cc/paint/paint_op.h"
+ #include "cc/paint/paint_op_buffer_iterator.h"
+ #include "third_party/blink/renderer/platform/allow_discouraged_type.h"
+@@ -19,9 +21,14 @@
+ #include "third_party/blink/renderer/platform/graphics/paint/transform_paint_property_node.h"
+ #include "third_party/blink/renderer/platform/json/json_values.h"
+ #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
++#include "third_party/skia/include/core/SkFont.h"
++#include "third_party/skia/include/core/SkFontStyle.h"
+ #include "third_party/skia/include/core/SkPath.h"
++#include "third_party/skia/include/core/SkRSXform.h"
+ #include "third_party/skia/include/core/SkTextBlob.h"
++#include "third_party/skia/include/core/SkTypeface.h"
+ #include "third_party/skia/include/utils/SkParsePath.h"
++#include "third_party/skia/src/core/SkTextBlobPriv.h"
+ #include "ui/gfx/geometry/transform.h"
+ 
+ namespace blink {
+@@ -152,6 +159,24 @@ std::unique_ptr<JSONObject> SerializePaintFlags(const cc::PaintFlags& flags) {
+     }
+   }
+ 
++  // Handle draw looper (shadows)
++  if (const auto& looper = flags.getLooper()) {
++    auto shadows_array = std::make_unique<JSONArray>();
++    for (const auto& layer : looper->GetLayers()) {
++      auto shadow_json = std::make_unique<JSONObject>();
++      shadow_json->SetDouble("offsetX", layer.offset.x());
++      shadow_json->SetDouble("offsetY", layer.offset.y());
++      shadow_json->SetDouble("blurSigma", layer.blur_sigma);
++      shadow_json->SetDouble("r", layer.color.fR);
++      shadow_json->SetDouble("g", layer.color.fG);
++      shadow_json->SetDouble("b", layer.color.fB);
++      shadow_json->SetDouble("a", layer.color.fA);
++      shadow_json->SetInteger("flags", layer.flags);
++      shadows_array->PushObject(std::move(shadow_json));
 +    }
++    json->SetArray("shadows", std::move(shadows_array));
 +  }
-+  return json;
-+}
 +
-+// Helper to serialize gfx::Transform
-+std::unique_ptr<JSONArray> SerializeTransform(const gfx::Transform& transform) {
-+  auto json = std::make_unique<JSONArray>();
-+  // gfx::Transform stores as column-major, output as row-major for readability
-+  for (int row = 0; row < 4; ++row) {
-+    for (int col = 0; col < 4; ++col) {
-+      json->PushDouble(transform.rc(row, col));
+   return json;
+ }
+ 
+@@ -259,13 +284,142 @@ void SerializePaintOpRecursive(const cc::PaintOp& op, JSONObject* json) {
+       json->SetObject("flags", SerializePaintFlags(draw_op.flags));
+       break;
+     }
++    case cc::PaintOpType::kDrawDRRect: {
++      // DrawDRRect draws between outer and inner rounded rects (used for borders, box-shadow inset)
++      const auto& draw_op = static_cast<const cc::DrawDRRectOp&>(op);
++      // Outer rrect
++      json->SetArray("outer_rect", SerializeRectLTRB(draw_op.outer.rect()));
++      auto outer_radii = std::make_unique<JSONArray>();
++      outer_radii->PushDouble(draw_op.outer.radii(SkRRect::kUpperLeft_Corner).x());
++      outer_radii->PushDouble(draw_op.outer.radii(SkRRect::kUpperLeft_Corner).y());
++      outer_radii->PushDouble(draw_op.outer.radii(SkRRect::kUpperRight_Corner).x());
++      outer_radii->PushDouble(draw_op.outer.radii(SkRRect::kUpperRight_Corner).y());
++      outer_radii->PushDouble(draw_op.outer.radii(SkRRect::kLowerRight_Corner).x());
++      outer_radii->PushDouble(draw_op.outer.radii(SkRRect::kLowerRight_Corner).y());
++      outer_radii->PushDouble(draw_op.outer.radii(SkRRect::kLowerLeft_Corner).x());
++      outer_radii->PushDouble(draw_op.outer.radii(SkRRect::kLowerLeft_Corner).y());
++      json->SetArray("outer_radii", std::move(outer_radii));
++      // Inner rrect
++      json->SetArray("inner_rect", SerializeRectLTRB(draw_op.inner.rect()));
++      auto inner_radii = std::make_unique<JSONArray>();
++      inner_radii->PushDouble(draw_op.inner.radii(SkRRect::kUpperLeft_Corner).x());
++      inner_radii->PushDouble(draw_op.inner.radii(SkRRect::kUpperLeft_Corner).y());
++      inner_radii->PushDouble(draw_op.inner.radii(SkRRect::kUpperRight_Corner).x());
++      inner_radii->PushDouble(draw_op.inner.radii(SkRRect::kUpperRight_Corner).y());
++      inner_radii->PushDouble(draw_op.inner.radii(SkRRect::kLowerRight_Corner).x());
++      inner_radii->PushDouble(draw_op.inner.radii(SkRRect::kLowerRight_Corner).y());
++      inner_radii->PushDouble(draw_op.inner.radii(SkRRect::kLowerLeft_Corner).x());
++      inner_radii->PushDouble(draw_op.inner.radii(SkRRect::kLowerLeft_Corner).y());
++      json->SetArray("inner_radii", std::move(inner_radii));
++      json->SetObject("flags", SerializePaintFlags(draw_op.flags));
++      break;
 +    }
-+  }
-+  return json;
-+}
+     case cc::PaintOpType::kDrawTextBlob: {
+       const auto& draw_op = static_cast<const cc::DrawTextBlobOp&>(op);
+       json->SetDouble("x", draw_op.x);
+       json->SetDouble("y", draw_op.y);
+       json->SetInteger("nodeId", draw_op.node_id);
+       json->SetObject("flags", SerializePaintFlags(draw_op.flags));
+-      // Note: Text blob serialization omitted for simplicity
 +
-+// Helper to serialize paint flags (color, style, stroke)
-+std::unique_ptr<JSONObject> SerializePaintFlags(const cc::PaintFlags& flags) {
-+  auto json = std::make_unique<JSONObject>();
-+  const SkColor4f& color = flags.getColor4f();
-+  json->SetDouble("r", color.fR);
-+  json->SetDouble("g", color.fG);
-+  json->SetDouble("b", color.fB);
-+  json->SetDouble("a", color.fA);
-+  json->SetInteger("style", static_cast<int>(flags.getStyle()));
-+  json->SetDouble("strokeWidth", flags.getStrokeWidth());
++      // Serialize text blob runs with glyph data using SkTextBlobRunIterator
++      // which properly handles different positioning types
++      if (draw_op.blob) {
++        json->SetArray("bounds", SerializeRectLTRB(draw_op.blob->bounds()));
 +
-+  // Handle shaders (gradients)
-+  if (flags.HasShader()) {
-+    const cc::PaintShader* shader = flags.getShader();
-+    if (shader) {
-+      cc::PaintShader::Type type = shader->shader_type();
-+      if (type == cc::PaintShader::Type::kLinearGradient) {
-+        json->SetString("shaderType", "kLinearGradient");
-+        auto start = std::make_unique<JSONArray>();
-+        start->PushDouble(shader->start_point().x());
-+        start->PushDouble(shader->start_point().y());
-+        json->SetArray("startPoint", std::move(start));
-+        auto end = std::make_unique<JSONArray>();
-+        end->PushDouble(shader->end_point().x());
-+        end->PushDouble(shader->end_point().y());
-+        json->SetArray("endPoint", std::move(end));
-+      } else if (type == cc::PaintShader::Type::kRadialGradient) {
-+        json->SetString("shaderType", "kRadialGradient");
-+        auto center = std::make_unique<JSONArray>();
-+        center->PushDouble(shader->center().x());
-+        center->PushDouble(shader->center().y());
-+        json->SetArray("center", std::move(center));
-+        json->SetDouble("radius", shader->end_radius());
-+      } else if (type == cc::PaintShader::Type::kTwoPointConicalGradient) {
-+        json->SetString("shaderType", "kTwoPointConicalGradient");
-+      } else if (type == cc::PaintShader::Type::kSweepGradient) {
-+        json->SetString("shaderType", "kSweepGradient");
-+      } else {
-+        json->SetString("shaderType", "other");
-+      }
++        auto runs_array = std::make_unique<JSONArray>();
++        for (SkTextBlobRunIterator iter(draw_op.blob.get()); !iter.done();
++             iter.next()) {
++          auto run_json = std::make_unique<JSONObject>();
++          const uint32_t count = iter.glyphCount();
++          run_json->SetInteger("glyphCount", static_cast<int>(count));
 +
-+      // Serialize gradient colors and positions
-+      const auto& colors = shader->colors();
-+      const auto& positions = shader->positions();
-+      if (!colors.empty()) {
-+        auto colors_array = std::make_unique<JSONArray>();
-+        for (const auto& c : colors) {
-+          colors_array->PushObject(SerializeColor(c));
++          // Serialize glyph IDs
++          // SAFETY: glyphs points to count elements as guaranteed by iter.glyphCount()
++          auto glyphs_array = std::make_unique<JSONArray>();
++          const SkGlyphID* glyphs = iter.glyphs();
++          for (uint32_t i = 0; i < count; ++i) {
++            glyphs_array->PushInteger(UNSAFE_TODO(glyphs[i]));
++          }
++          run_json->SetArray("glyphs", std::move(glyphs_array));
++
++          // Serialize positioning type and data
++          auto positioning = iter.positioning();
++          run_json->SetInteger("positioning", static_cast<int>(positioning));
++
++          // Serialize run offset (baseline position for horizontal runs)
++          const SkPoint& offset = iter.offset();
++          run_json->SetDouble("offsetX", offset.x());
++          run_json->SetDouble("offsetY", offset.y());
++
++          if (positioning == SkTextBlobRunIterator::kRSXform_Positioning) {
++            // RSXform: [scos, ssin, tx, ty] per glyph
++            // SAFETY: xforms has count elements for RSXform positioning
++            auto rsxforms_array = std::make_unique<JSONArray>();
++            const SkRSXform* xforms = iter.xforms();
++            for (uint32_t i = 0; i < count; ++i) {
++              auto xform_json = std::make_unique<JSONObject>();
++              xform_json->SetDouble("scos", UNSAFE_TODO(xforms[i]).fSCos);
++              xform_json->SetDouble("ssin", UNSAFE_TODO(xforms[i]).fSSin);
++              xform_json->SetDouble("tx", UNSAFE_TODO(xforms[i]).fTx);
++              xform_json->SetDouble("ty", UNSAFE_TODO(xforms[i]).fTy);
++              rsxforms_array->PushObject(std::move(xform_json));
++            }
++            run_json->SetArray("rsxforms", std::move(rsxforms_array));
++          } else if (positioning == SkTextBlobRunIterator::kFull_Positioning) {
++            // Full positioning: x,y pairs
++            // SAFETY: points has count elements for full positioning
++            auto positions_array = std::make_unique<JSONArray>();
++            const SkPoint* points = iter.points();
++            for (uint32_t i = 0; i < count; ++i) {
++              auto pos_json = std::make_unique<JSONObject>();
++              pos_json->SetDouble("x", UNSAFE_TODO(points[i]).x());
++              pos_json->SetDouble("y", UNSAFE_TODO(points[i]).y());
++              positions_array->PushObject(std::move(pos_json));
++            }
++            run_json->SetArray("positions", std::move(positions_array));
++          } else if (positioning ==
++                     SkTextBlobRunIterator::kHorizontal_Positioning) {
++            // Horizontal: x positions only, use iter.pos() for raw scalars
++            // SAFETY: pos has count scalars for horizontal positioning
++            auto positions_array = std::make_unique<JSONArray>();
++            const SkScalar* pos = iter.pos();
++            for (uint32_t i = 0; i < count; ++i) {
++              positions_array->PushDouble(UNSAFE_TODO(pos[i]));
++            }
++            run_json->SetArray("positions", std::move(positions_array));
++          }
++          // kDefault_Positioning has no position data - uses font metrics
++
++          // Serialize font info
++          const SkFont& font = iter.font();
++          auto font_json = std::make_unique<JSONObject>();
++          font_json->SetDouble("size", font.getSize());
++          font_json->SetDouble("scaleX", font.getScaleX());
++          font_json->SetDouble("skewX", font.getSkewX());
++          font_json->SetBoolean("embolden", font.isEmbolden());
++          font_json->SetBoolean("linearMetrics", font.isLinearMetrics());
++          font_json->SetBoolean("subpixel", font.isSubpixel());
++          font_json->SetBoolean("forceAutoHinting", font.isForceAutoHinting());
++
++          // Get typeface info if available
++          if (SkTypeface* typeface = font.getTypeface()) {
++            SkString family_name;
++            typeface->getFamilyName(&family_name);
++            font_json->SetString("family", family_name.c_str());
++            font_json->SetInteger("typefaceId", typeface->uniqueID());
++
++            // Font style
++            SkFontStyle style = typeface->fontStyle();
++            font_json->SetInteger("weight", style.weight());
++            font_json->SetInteger("width", style.width());
++            font_json->SetInteger("slant", static_cast<int>(style.slant()));
++          }
++
++          run_json->SetObject("font", std::move(font_json));
++          runs_array->PushObject(std::move(run_json));
 +        }
-+        json->SetArray("gradientColors", std::move(colors_array));
-+
-+        auto positions_array = std::make_unique<JSONArray>();
-+        for (const auto& pos : positions) {
-+          positions_array->PushDouble(pos);
++        json->SetArray("runs", std::move(runs_array));
++      }
+       break;
+     }
+     case cc::PaintOpType::kDrawRecord: {
+@@ -291,6 +445,48 @@ void SerializePaintOpRecursive(const cc::PaintOp& op, JSONObject* json) {
+     case cc::PaintOpType::kSaveLayer: {
+       const auto& save_op = static_cast<const cc::SaveLayerOp&>(op);
+       json->SetArray("bounds", SerializeRectLTRB(save_op.bounds));
++      // Serialize flags including image filter (for shadows/blur)
++      auto flags_json = std::make_unique<JSONObject>();
++      const SkColor4f& color = save_op.flags.getColor4f();
++      flags_json->SetDouble("r", color.fR);
++      flags_json->SetDouble("g", color.fG);
++      flags_json->SetDouble("b", color.fB);
++      flags_json->SetDouble("a", color.fA);
++      // Check for image filter (used for blur, drop shadow, etc.)
++      const auto& image_filter = save_op.flags.getImageFilter();
++      if (image_filter) {
++        auto filter_json = std::make_unique<JSONObject>();
++        cc::PaintFilter::Type filter_type = image_filter->type();
++        filter_json->SetInteger("filterType", static_cast<int>(filter_type));
++        if (filter_type == cc::PaintFilter::Type::kBlur) {
++          const auto* blur =
++              static_cast<const cc::BlurPaintFilter*>(image_filter.get());
++          filter_json->SetString("filterName", "blur");
++          filter_json->SetDouble("sigmaX", blur->sigma_x());
++          filter_json->SetDouble("sigmaY", blur->sigma_y());
++        } else if (filter_type == cc::PaintFilter::Type::kDropShadow) {
++          const auto* shadow =
++              static_cast<const cc::DropShadowPaintFilter*>(image_filter.get());
++          filter_json->SetString("filterName", "dropShadow");
++          filter_json->SetDouble("dx", shadow->dx());
++          filter_json->SetDouble("dy", shadow->dy());
++          filter_json->SetDouble("sigmaX", shadow->sigma_x());
++          filter_json->SetDouble("sigmaY", shadow->sigma_y());
++          const SkColor4f& shadow_color = shadow->color();
++          auto shadow_color_json = std::make_unique<JSONObject>();
++          shadow_color_json->SetDouble("r", shadow_color.fR);
++          shadow_color_json->SetDouble("g", shadow_color.fG);
++          shadow_color_json->SetDouble("b", shadow_color.fB);
++          shadow_color_json->SetDouble("a", shadow_color.fA);
++          filter_json->SetObject("shadowColor", std::move(shadow_color_json));
++          filter_json->SetInteger("shadowMode",
++                                  static_cast<int>(shadow->shadow_mode()));
++        } else {
++          filter_json->SetString("filterName", "other");
 +        }
-+        json->SetArray("gradientPositions", std::move(positions_array));
++        flags_json->SetObject("imageFilter", std::move(filter_json));
 +      }
-+      json->SetBoolean("hasShader", true);
-+    }
-+  }
-+
-+  return json;
-+}
-+
-+// Forward declaration for recursive serialization
-+void SerializePaintOpRecursive(const cc::PaintOp& op, JSONObject* json);
-+
-+// Serialize a PaintRecord (collection of paint ops)
-+std::unique_ptr<JSONArray> SerializePaintRecord(const cc::PaintRecord& record) {
-+  auto json = std::make_unique<JSONArray>();
-+  for (cc::PaintOpBuffer::Iterator it(record.buffer()); it; ++it) {
-+    auto op_json = std::make_unique<JSONObject>();
-+    SerializePaintOpRecursive(*it, op_json.get());
-+    json->PushObject(std::move(op_json));
-+  }
-+  return json;
-+}
-+
-+// Serialize a single paint op
-+void SerializePaintOpRecursive(const cc::PaintOp& op, JSONObject* json) {
-+  json->SetString("type", cc::PaintOpTypeToString(op.GetType()).c_str());
-+
-+  switch (op.GetType()) {
-+    case cc::PaintOpType::kClipRect: {
-+      const auto& clip_op = static_cast<const cc::ClipRectOp&>(op);
-+      json->SetArray("rect", SerializeRectLTRB(clip_op.rect));
-+      json->SetBoolean("antiAlias", clip_op.antialias);
-+      break;
-+    }
-+    case cc::PaintOpType::kClipRRect: {
-+      const auto& clip_op = static_cast<const cc::ClipRRectOp&>(op);
-+      json->SetArray("rect", SerializeRectLTRB(clip_op.rrect.rect()));
-+      // Serialize corner radii
-+      auto radii = std::make_unique<JSONArray>();
-+      radii->PushDouble(clip_op.rrect.radii(SkRRect::kUpperLeft_Corner).x());
-+      radii->PushDouble(clip_op.rrect.radii(SkRRect::kUpperLeft_Corner).y());
-+      radii->PushDouble(clip_op.rrect.radii(SkRRect::kUpperRight_Corner).x());
-+      radii->PushDouble(clip_op.rrect.radii(SkRRect::kUpperRight_Corner).y());
-+      radii->PushDouble(clip_op.rrect.radii(SkRRect::kLowerRight_Corner).x());
-+      radii->PushDouble(clip_op.rrect.radii(SkRRect::kLowerRight_Corner).y());
-+      radii->PushDouble(clip_op.rrect.radii(SkRRect::kLowerLeft_Corner).x());
-+      radii->PushDouble(clip_op.rrect.radii(SkRRect::kLowerLeft_Corner).y());
-+      json->SetArray("radii", std::move(radii));
-+      json->SetBoolean("antiAlias", clip_op.antialias);
-+      break;
-+    }
-+    case cc::PaintOpType::kClipPath: {
-+      const auto& clip_op = static_cast<const cc::ClipPathOp&>(op);
-+      SkString path_str = SkParsePath::ToSVGString(clip_op.path);
-+      json->SetString("path", path_str.c_str());
-+      json->SetArray("bounds", SerializeRectLTRB(clip_op.path.getBounds()));
-+      json->SetBoolean("antiAlias", clip_op.antialias);
-+      break;
-+    }
-+    case cc::PaintOpType::kDrawColor: {
-+      const auto& draw_op = static_cast<const cc::DrawColorOp&>(op);
-+      json->SetDouble("r", draw_op.color.fR);
-+      json->SetDouble("g", draw_op.color.fG);
-+      json->SetDouble("b", draw_op.color.fB);
-+      json->SetDouble("a", draw_op.color.fA);
-+      break;
-+    }
-+    case cc::PaintOpType::kDrawLine: {
-+      const auto& draw_op = static_cast<const cc::DrawLineOp&>(op);
-+      json->SetDouble("x0", draw_op.x0);
-+      json->SetDouble("y0", draw_op.y0);
-+      json->SetDouble("x1", draw_op.x1);
-+      json->SetDouble("y1", draw_op.y1);
-+      break;
-+    }
-+    case cc::PaintOpType::kDrawOval: {
-+      const auto& draw_op = static_cast<const cc::DrawOvalOp&>(op);
-+      json->SetArray("oval", SerializeRectLTRB(draw_op.oval));
-+      break;
-+    }
-+    case cc::PaintOpType::kDrawPath: {
-+      const auto& draw_op = static_cast<const cc::DrawPathOp&>(op);
-+      SkString path_str = SkParsePath::ToSVGString(draw_op.path);
-+      json->SetString("path", path_str.c_str());
-+      json->SetInteger("fillType",
-+                       static_cast<int>(draw_op.path.getFillType()));
-+      json->SetArray("bounds", SerializeRectLTRB(draw_op.path.getBounds()));
-+      json->SetObject("flags", SerializePaintFlags(draw_op.flags));
-+      break;
-+    }
-+    case cc::PaintOpType::kDrawRect: {
-+      const auto& draw_op = static_cast<const cc::DrawRectOp&>(op);
-+      json->SetArray("rect", SerializeRectLTRB(draw_op.rect));
-+      json->SetObject("flags", SerializePaintFlags(draw_op.flags));
-+      break;
-+    }
-+    case cc::PaintOpType::kDrawRRect: {
-+      const auto& draw_op = static_cast<const cc::DrawRRectOp&>(op);
-+      json->SetArray("rect", SerializeRectLTRB(draw_op.rrect.rect()));
-+      // Serialize corner radii
-+      auto radii = std::make_unique<JSONArray>();
-+      radii->PushDouble(draw_op.rrect.radii(SkRRect::kUpperLeft_Corner).x());
-+      radii->PushDouble(draw_op.rrect.radii(SkRRect::kUpperLeft_Corner).y());
-+      radii->PushDouble(draw_op.rrect.radii(SkRRect::kUpperRight_Corner).x());
-+      radii->PushDouble(draw_op.rrect.radii(SkRRect::kUpperRight_Corner).y());
-+      radii->PushDouble(draw_op.rrect.radii(SkRRect::kLowerRight_Corner).x());
-+      radii->PushDouble(draw_op.rrect.radii(SkRRect::kLowerRight_Corner).y());
-+      radii->PushDouble(draw_op.rrect.radii(SkRRect::kLowerLeft_Corner).x());
-+      radii->PushDouble(draw_op.rrect.radii(SkRRect::kLowerLeft_Corner).y());
-+      json->SetArray("radii", std::move(radii));
-+      json->SetObject("flags", SerializePaintFlags(draw_op.flags));
-+      break;
-+    }
-+    case cc::PaintOpType::kDrawTextBlob: {
-+      const auto& draw_op = static_cast<const cc::DrawTextBlobOp&>(op);
-+      json->SetDouble("x", draw_op.x);
-+      json->SetDouble("y", draw_op.y);
-+      json->SetInteger("nodeId", draw_op.node_id);
-+      json->SetObject("flags", SerializePaintFlags(draw_op.flags));
-+      // Note: Text blob serialization omitted for simplicity
-+      break;
-+    }
-+    case cc::PaintOpType::kDrawRecord: {
-+      const auto& draw_op = static_cast<const cc::DrawRecordOp&>(op);
-+      json->SetArray("record", SerializePaintRecord(draw_op.record));
-+      break;
-+    }
-+    case cc::PaintOpType::kDrawImageRect: {
-+      const auto& draw_op = static_cast<const cc::DrawImageRectOp&>(op);
-+      json->SetArray("src", SerializeRectLTRB(draw_op.src));
-+      json->SetArray("dst", SerializeRectLTRB(draw_op.dst));
-+      if (draw_op.image) {
-+        json->SetInteger("imageWidth", draw_op.image.width());
-+        json->SetInteger("imageHeight", draw_op.image.height());
-+      }
-+      break;
-+    }
-+    case cc::PaintOpType::kSave:
-+    case cc::PaintOpType::kRestore:
-+    case cc::PaintOpType::kNoop:
-+      // No additional data
-+      break;
-+    case cc::PaintOpType::kSaveLayer: {
-+      const auto& save_op = static_cast<const cc::SaveLayerOp&>(op);
-+      json->SetArray("bounds", SerializeRectLTRB(save_op.bounds));
-+      break;
-+    }
-+    case cc::PaintOpType::kSaveLayerAlpha: {
-+      const auto& save_op = static_cast<const cc::SaveLayerAlphaOp&>(op);
-+      json->SetArray("bounds", SerializeRectLTRB(save_op.bounds));
-+      json->SetDouble("alpha", save_op.alpha);
-+      break;
-+    }
-+    case cc::PaintOpType::kTranslate: {
-+      const auto& translate_op = static_cast<const cc::TranslateOp&>(op);
-+      json->SetDouble("dx", translate_op.dx);
-+      json->SetDouble("dy", translate_op.dy);
-+      break;
-+    }
-+    case cc::PaintOpType::kScale: {
-+      const auto& scale_op = static_cast<const cc::ScaleOp&>(op);
-+      json->SetDouble("sx", scale_op.sx);
-+      json->SetDouble("sy", scale_op.sy);
-+      break;
-+    }
-+    case cc::PaintOpType::kRotate: {
-+      const auto& rotate_op = static_cast<const cc::RotateOp&>(op);
-+      json->SetDouble("degrees", rotate_op.degrees);
-+      break;
-+    }
-+    case cc::PaintOpType::kConcat: {
-+      const auto& concat_op = static_cast<const cc::ConcatOp&>(op);
-+      json->SetArray("matrix", SerializeSkM44(concat_op.matrix));
-+      break;
-+    }
-+    case cc::PaintOpType::kSetMatrix: {
-+      const auto& matrix_op = static_cast<const cc::SetMatrixOp&>(op);
-+      json->SetArray("matrix", SerializeSkM44(matrix_op.matrix));
-+      break;
-+    }
-+    default:
-+      // For other ops, just output type (already done above)
-+      break;
-+  }
-+}
-+
-+// Property tree node ID assignment helpers.
-+// Uses void* to avoid blink-gc checker issues with GC-managed pointers.
-+// This is safe because we only use these maps during serialization within
-+// a single stack frame - no GC can occur during this time.
-+class PropertyTreeIdMapper {
-+ public:
-+  int GetOrAssignTransformId(const TransformPaintPropertyNode* node) {
-+    if (!node) return -1;
-+    const void* key = static_cast<const void*>(node);
-+    auto it = transform_ids_.find(key);
-+    if (it != transform_ids_.end()) {
-+      return it->second;
-+    }
-+    // First assign IDs to parents (use UnaliasedParent to get correct type)
-+    if (auto* parent = node->UnaliasedParent()) {
-+      GetOrAssignTransformId(parent);
-+    }
-+    int id = next_transform_id_++;
-+    transform_ids_[key] = id;
-+    return id;
-+  }
-+
-+  int GetOrAssignClipId(const ClipPaintPropertyNode* node) {
-+    if (!node) return -1;
-+    const void* key = static_cast<const void*>(node);
-+    auto it = clip_ids_.find(key);
-+    if (it != clip_ids_.end()) {
-+      return it->second;
-+    }
-+    // First assign IDs to parents (use UnaliasedParent to get correct type)
-+    if (auto* parent = node->UnaliasedParent()) {
-+      GetOrAssignClipId(parent);
-+    }
-+    int id = next_clip_id_++;
-+    clip_ids_[key] = id;
-+    return id;
-+  }
-+
-+  int GetOrAssignEffectId(const EffectPaintPropertyNode* node) {
-+    if (!node) return -1;
-+    const void* key = static_cast<const void*>(node);
-+    auto it = effect_ids_.find(key);
-+    if (it != effect_ids_.end()) {
-+      return it->second;
-+    }
-+    // First assign IDs to parents (use UnaliasedParent to get correct type)
-+    if (auto* parent = node->UnaliasedParent()) {
-+      GetOrAssignEffectId(parent);
-+    }
-+    int id = next_effect_id_++;
-+    effect_ids_[key] = id;
-+    return id;
-+  }
-+
-+  const std::unordered_map<const void*, int>& GetTransformIds() const {
-+    return transform_ids_;
-+  }
-+  const std::unordered_map<const void*, int>& GetClipIds() const {
-+    return clip_ids_;
-+  }
-+  const std::unordered_map<const void*, int>& GetEffectIds() const {
-+    return effect_ids_;
-+  }
-+
-+ private:
-+  std::unordered_map<const void*, int> transform_ids_
-+      ALLOW_DISCOURAGED_TYPE("Using void* to avoid blink-gc issues with GC pointers");
-+  std::unordered_map<const void*, int> clip_ids_
-+      ALLOW_DISCOURAGED_TYPE("Using void* to avoid blink-gc issues with GC pointers");
-+  std::unordered_map<const void*, int> effect_ids_
-+      ALLOW_DISCOURAGED_TYPE("Using void* to avoid blink-gc issues with GC pointers");
-+  int next_transform_id_ = 0;
-+  int next_clip_id_ = 0;
-+  int next_effect_id_ = 0;
-+};
-+
-+// Serialize a single PendingLayer
-+std::unique_ptr<JSONObject> SerializePendingLayer(
-+    const PendingLayer& layer,
-+    int layer_id,
-+    PropertyTreeIdMapper& id_mapper) {
++      json->SetObject("flags", std::move(flags_json));
+       break;
+     }
+     case cc::PaintOpType::kSaveLayerAlpha: {
+@@ -659,4 +855,140 @@ std::unique_ptr<JSONObject> SerializeBlinkPropertyTrees(
+   return json;
+ }
+ 
++std::unique_ptr<JSONObject> SerializePaintArtifact(
++    const PaintArtifact& artifact) {
 +  auto json = std::make_unique<JSONObject>();
-+
-+  json->SetInteger("layer_id", layer_id);
-+  json->SetString("debug_name", layer.DebugName());
-+
-+  // Bounds
-+  const gfx::RectF& bounds = layer.BoundsForTesting();
-+  auto bounds_json = std::make_unique<JSONObject>();
-+  bounds_json->SetDouble("x", bounds.x());
-+  bounds_json->SetDouble("y", bounds.y());
-+  bounds_json->SetDouble("width", bounds.width());
-+  bounds_json->SetDouble("height", bounds.height());
-+  json->SetObject("bounds", std::move(bounds_json));
-+
-+  // Property tree state
-+  const PropertyTreeState& state = layer.GetPropertyTreeState();
-+  auto props_json = std::make_unique<JSONObject>();
-+  props_json->SetInteger("transform_id",
-+                         id_mapper.GetOrAssignTransformId(&state.Transform()));
-+  props_json->SetInteger("clip_id",
-+                         id_mapper.GetOrAssignClipId(&state.Clip()));
-+  props_json->SetInteger("effect_id",
-+                         id_mapper.GetOrAssignEffectId(&state.Effect()));
-+  json->SetObject("property_tree_state", std::move(props_json));
-+
-+  json->SetBoolean("draws_content", layer.DrawsContent());
-+
-+  // Paint chunks and their paint ops
 +  auto chunks_array = std::make_unique<JSONArray>();
++
++  PropertyTreeIdMapper id_mapper;
++
 +  int chunk_id = 0;
-+  for (const auto& chunk : layer.Chunks()) {
++  for (const PaintChunk& chunk : artifact.GetPaintChunks()) {
 +    auto chunk_json = std::make_unique<JSONObject>();
 +    chunk_json->SetInteger("chunk_id", chunk_id++);
 +    chunk_json->SetArray("bounds", SerializeGfxRect(chunk.bounds));
 +    chunk_json->SetArray("drawable_bounds",
 +                         SerializeGfxRect(chunk.drawable_bounds));
 +
++    // Debug name from the display item id
++    if (chunk.id.client_id) {
++      chunk_json->SetString("debug_name",
++                            chunk.id.ToString(artifact).Utf8().c_str());
++    }
++
++    // Property tree state for this chunk
++    auto props_json = std::make_unique<JSONObject>();
++    props_json->SetInteger("transform_id",
++                           id_mapper.GetOrAssignTransformId(&chunk.properties.Transform().Unalias()));
++    props_json->SetInteger("clip_id",
++                           id_mapper.GetOrAssignClipId(&chunk.properties.Clip().Unalias()));
++    props_json->SetInteger("effect_id",
++                           id_mapper.GetOrAssignEffectId(&chunk.properties.Effect().Unalias()));
++    chunk_json->SetObject("property_tree_state", std::move(props_json));
++
 +    // Serialize paint ops from display items in this chunk
 +    auto paint_ops_array = std::make_unique<JSONArray>();
-+    const PaintArtifact& artifact = layer.Chunks().GetPaintArtifact();
 +    // Use UNSAFE_TODO to wrap the unsafe buffer access - this is safe because
 +    // begin_index and end_index are validated by the PaintChunk structure.
 +    auto display_items = UNSAFE_TODO(
@@ -520,182 +397,21 @@ index 0000000000..7282912e5b
 +
 +    chunks_array->PushObject(std::move(chunk_json));
 +  }
-+  json->SetArray("paint_chunks", std::move(chunks_array));
 +
++  json->SetArray("PaintChunks", std::move(chunks_array));
 +  return json;
 +}
 +
-+// Serialize transform tree nodes - takes the id map that stores void* keys
-+std::unique_ptr<JSONObject> SerializeTransformTree(
-+    const std::unordered_map<const void*, int>& node_ids) {
-+  auto json = std::make_unique<JSONObject>();
-+  auto nodes_array = std::make_unique<JSONArray>();
-+
-+  // Create a vector of (id, void*) pairs for sorting by id
-+  std::vector<std::pair<int, const void*>> sorted_nodes;
-+  for (const auto& entry : node_ids) {
-+    sorted_nodes.push_back({entry.second, entry.first});
-+  }
-+  std::sort(sorted_nodes.begin(), sorted_nodes.end(),
-+            [](const auto& a, const auto& b) { return a.first < b.first; });
-+
-+  for (const auto& entry : sorted_nodes) {
-+    int id = entry.first;
-+    const auto* node =
-+        static_cast<const TransformPaintPropertyNode*>(entry.second);
-+
-+    auto node_json = std::make_unique<JSONObject>();
-+    node_json->SetInteger("id", id);
-+
-+    // Parent ID (use UnaliasedParent to get correct type)
-+    if (auto* parent = node->UnaliasedParent()) {
-+      const void* parent_key = static_cast<const void*>(parent);
-+      auto parent_it = node_ids.find(parent_key);
-+      node_json->SetInteger(
-+          "parent_id", parent_it != node_ids.end() ? parent_it->second : -1);
-+    } else {
-+      node_json->SetInteger("parent_id", -1);
-+    }
-+
-+    // Transform matrix
-+    if (node->IsIdentityOr2dTranslation()) {
-+      gfx::Vector2dF translation = node->Get2dTranslation();
-+      if (!translation.IsZero()) {
-+        auto translation_array = std::make_unique<JSONArray>();
-+        translation_array->PushDouble(translation.x());
-+        translation_array->PushDouble(translation.y());
-+        node_json->SetArray("translation2d", std::move(translation_array));
-+      }
-+    } else {
-+      node_json->SetArray("matrix", SerializeTransform(node->Matrix()));
-+    }
-+
-+    nodes_array->PushObject(std::move(node_json));
-+  }
-+
-+  json->SetArray("nodes", std::move(nodes_array));
-+  return json;
-+}
-+
-+// Serialize clip tree nodes
-+std::unique_ptr<JSONObject> SerializeClipTree(
-+    const std::unordered_map<const void*, int>& node_ids) {
-+  auto json = std::make_unique<JSONObject>();
-+  auto nodes_array = std::make_unique<JSONArray>();
-+
-+  // Create a vector of (id, void*) pairs for sorting by id
-+  std::vector<std::pair<int, const void*>> sorted_nodes;
-+  for (const auto& entry : node_ids) {
-+    sorted_nodes.push_back({entry.second, entry.first});
-+  }
-+  std::sort(sorted_nodes.begin(), sorted_nodes.end(),
-+            [](const auto& a, const auto& b) { return a.first < b.first; });
-+
-+  for (const auto& entry : sorted_nodes) {
-+    int id = entry.first;
-+    const auto* node = static_cast<const ClipPaintPropertyNode*>(entry.second);
-+
-+    auto node_json = std::make_unique<JSONObject>();
-+    node_json->SetInteger("id", id);
-+
-+    // Parent ID (use UnaliasedParent to get correct type)
-+    if (auto* parent = node->UnaliasedParent()) {
-+      const void* parent_key = static_cast<const void*>(parent);
-+      auto parent_it = node_ids.find(parent_key);
-+      node_json->SetInteger(
-+          "parent_id", parent_it != node_ids.end() ? parent_it->second : -1);
-+    } else {
-+      node_json->SetInteger("parent_id", -1);
-+    }
-+
-+    // Clip rect
-+    node_json->SetArray("clip_rect",
-+                        SerializeGfxRectF(node->PaintClipRect().Rect()));
-+
-+    nodes_array->PushObject(std::move(node_json));
-+  }
-+
-+  json->SetArray("nodes", std::move(nodes_array));
-+  return json;
-+}
-+
-+// Serialize effect tree nodes
-+std::unique_ptr<JSONObject> SerializeEffectTree(
-+    const std::unordered_map<const void*, int>& node_ids) {
-+  auto json = std::make_unique<JSONObject>();
-+  auto nodes_array = std::make_unique<JSONArray>();
-+
-+  // Create a vector of (id, void*) pairs for sorting by id
-+  std::vector<std::pair<int, const void*>> sorted_nodes;
-+  for (const auto& entry : node_ids) {
-+    sorted_nodes.push_back({entry.second, entry.first});
-+  }
-+  std::sort(sorted_nodes.begin(), sorted_nodes.end(),
-+            [](const auto& a, const auto& b) { return a.first < b.first; });
-+
-+  for (const auto& entry : sorted_nodes) {
-+    int id = entry.first;
-+    const auto* node =
-+        static_cast<const EffectPaintPropertyNode*>(entry.second);
-+
-+    auto node_json = std::make_unique<JSONObject>();
-+    node_json->SetInteger("id", id);
-+
-+    // Parent ID (use UnaliasedParent to get correct type)
-+    if (auto* parent = node->UnaliasedParent()) {
-+      const void* parent_key = static_cast<const void*>(parent);
-+      auto parent_it = node_ids.find(parent_key);
-+      node_json->SetInteger(
-+          "parent_id", parent_it != node_ids.end() ? parent_it->second : -1);
-+    } else {
-+      node_json->SetInteger("parent_id", -1);
-+    }
-+
-+    // Opacity
-+    node_json->SetDouble("opacity", node->Opacity());
-+
-+    // Blend mode
-+    node_json->SetString("blend_mode", SkBlendMode_Name(node->BlendMode()));
-+
-+    nodes_array->PushObject(std::move(node_json));
-+  }
-+
-+  json->SetArray("nodes", std::move(nodes_array));
-+  return json;
-+}
-+
-+}  // namespace
-+
-+std::unique_ptr<JSONObject> SerializePendingLayersWithPaintOps(
-+    const PendingLayers& pending_layers,
-+    const PaintArtifact& artifact) {
-+  auto json = std::make_unique<JSONObject>();
-+  auto layers_array = std::make_unique<JSONArray>();
-+
-+  PropertyTreeIdMapper id_mapper;
-+
-+  int layer_id = 0;
-+  for (const PendingLayer& layer : pending_layers) {
-+    layers_array->PushObject(
-+        SerializePendingLayer(layer, layer_id++, id_mapper));
-+  }
-+
-+  json->SetArray("BlinkLayers", std::move(layers_array));
-+  return json;
-+}
-+
-+std::unique_ptr<JSONObject> SerializeBlinkPropertyTrees(
-+    const PendingLayers& pending_layers,
++std::unique_ptr<JSONObject> SerializePaintArtifactPropertyTrees(
 +    const PaintArtifact& artifact) {
 +  auto json = std::make_unique<JSONObject>();
 +
-+  // First, collect all property tree nodes from all layers
++  // Collect all property tree nodes from all chunks
 +  PropertyTreeIdMapper id_mapper;
-+  for (const PendingLayer& layer : pending_layers) {
-+    const PropertyTreeState& state = layer.GetPropertyTreeState();
-+    id_mapper.GetOrAssignTransformId(&state.Transform());
-+    id_mapper.GetOrAssignClipId(&state.Clip());
-+    id_mapper.GetOrAssignEffectId(&state.Effect());
++  for (const PaintChunk& chunk : artifact.GetPaintChunks()) {
++    id_mapper.GetOrAssignTransformId(&chunk.properties.Transform().Unalias());
++    id_mapper.GetOrAssignClipId(&chunk.properties.Clip().Unalias());
++    id_mapper.GetOrAssignEffectId(&chunk.properties.Effect().Unalias());
 +  }
 +
 +  json->SetObject("transform_tree",
@@ -706,42 +422,96 @@ index 0000000000..7282912e5b
 +  return json;
 +}
 +
-+}  // namespace blink
++std::unique_ptr<JSONObject> SerializeRawPaintOps(const PaintArtifact& artifact) {
++  auto json = std::make_unique<JSONObject>();
++  auto paint_ops_array = std::make_unique<JSONArray>();
++
++  // We need property tree IDs, so use a mapper
++  PropertyTreeIdMapper id_mapper;
++
++  // First pass: assign IDs to all property tree nodes
++  for (const PaintChunk& chunk : artifact.GetPaintChunks()) {
++    id_mapper.GetOrAssignTransformId(&chunk.properties.Transform().Unalias());
++    id_mapper.GetOrAssignClipId(&chunk.properties.Clip().Unalias());
++    id_mapper.GetOrAssignEffectId(&chunk.properties.Effect().Unalias());
++  }
++
++  // Second pass: iterate through chunks to get property tree state for each op
++  for (const PaintChunk& chunk : artifact.GetPaintChunks()) {
++    // Get property tree IDs for this chunk
++    int transform_id = id_mapper.GetOrAssignTransformId(
++        &chunk.properties.Transform().Unalias());
++    int clip_id = id_mapper.GetOrAssignClipId(
++        &chunk.properties.Clip().Unalias());
++    int effect_id = id_mapper.GetOrAssignEffectId(
++        &chunk.properties.Effect().Unalias());
++
++    // Iterate through display items in this chunk
++    auto display_items = UNSAFE_TODO(
++        artifact.GetDisplayItemList().ItemsInRange(chunk.begin_index,
++                                                   chunk.end_index));
++    for (const DisplayItem& item : display_items) {
++      if (item.IsDrawing()) {
++        const auto& drawing = To<DrawingDisplayItem>(item);
++        const cc::PaintRecord& record = drawing.GetPaintRecord();
++        for (cc::PaintOpBuffer::Iterator it(record.buffer()); it; ++it) {
++          auto op_json = std::make_unique<JSONObject>();
++          SerializePaintOpRecursive(*it, op_json.get());
++
++          // Add property tree state to each paint op
++          op_json->SetInteger("transform_id", transform_id);
++          op_json->SetInteger("clip_id", clip_id);
++          op_json->SetInteger("effect_id", effect_id);
++
++          paint_ops_array->PushObject(std::move(op_json));
++        }
++      }
++    }
++  }
++
++  json->SetArray("paint_ops", std::move(paint_ops_array));
++
++  // Also include the property trees for reference
++  json->SetObject("transform_tree",
++                  SerializeTransformTree(id_mapper.GetTransformIds()));
++  json->SetObject("clip_tree", SerializeClipTree(id_mapper.GetClipIds()));
++  json->SetObject("effect_tree", SerializeEffectTree(id_mapper.GetEffectIds()));
++
++  return json;
++}
++
+ }  // namespace blink
 diff --git a/third_party/blink/renderer/platform/graphics/compositing/paint_artifact_json_serializer.h b/third_party/blink/renderer/platform/graphics/compositing/paint_artifact_json_serializer.h
-new file mode 100644
-index 0000000000..7e9c66850e
---- /dev/null
+index 7e9c66850e..7378e7efc4 100644
+--- a/third_party/blink/renderer/platform/graphics/compositing/paint_artifact_json_serializer.h
 +++ b/third_party/blink/renderer/platform/graphics/compositing/paint_artifact_json_serializer.h
-@@ -0,0 +1,32 @@
-+// Copyright 2024 The Chromium Authors
-+// Use of this source code is governed by a BSD-style license that can be
-+// found in the LICENSE file.
-+
-+#ifndef THIRD_PARTY_BLINK_RENDERER_PLATFORM_GRAPHICS_COMPOSITING_PAINT_ARTIFACT_JSON_SERIALIZER_H_
-+#define THIRD_PARTY_BLINK_RENDERER_PLATFORM_GRAPHICS_COMPOSITING_PAINT_ARTIFACT_JSON_SERIALIZER_H_
-+
-+#include "third_party/blink/renderer/platform/graphics/compositing/pending_layer.h"
-+#include "third_party/blink/renderer/platform/platform_export.h"
-+#include <memory>
-+
-+namespace blink {
-+
-+class JSONObject;
-+class PaintArtifact;
-+
-+// Serializes PendingLayers with paint ops to JSON format compatible with
-+// layers.json structure. This captures Blink-level compositor data after
-+// layerization but before handoff to CC.
-+PLATFORM_EXPORT std::unique_ptr<JSONObject> SerializePendingLayersWithPaintOps(
-+    const PendingLayers& pending_layers,
+@@ -27,6 +27,29 @@ PLATFORM_EXPORT std::unique_ptr<JSONObject> SerializeBlinkPropertyTrees(
+     const PendingLayers& pending_layers,
+     const PaintArtifact& artifact);
+ 
++// Serializes the raw PaintArtifact (PaintChunks + DisplayItems) BEFORE
++// layerization. This captures the paint data in its most granular form.
++PLATFORM_EXPORT std::unique_ptr<JSONObject> SerializePaintArtifact(
 +    const PaintArtifact& artifact);
 +
-+// Serializes Blink property trees (transform, effect, clip) to JSON format
-+// compatible with property_trees.json structure.
-+PLATFORM_EXPORT std::unique_ptr<JSONObject> SerializeBlinkPropertyTrees(
-+    const PendingLayers& pending_layers,
++// Serializes Blink property trees from raw PaintArtifact (before layerization).
++PLATFORM_EXPORT std::unique_ptr<JSONObject> SerializePaintArtifactPropertyTrees(
 +    const PaintArtifact& artifact);
 +
-+}  // namespace blink
++// Serializes raw paint operations from PaintArtifact WITHOUT chunk grouping.
++// This outputs a flat list of paint ops in paint order, similar to what would
++// be captured by logging GraphicsContext calls directly.
++// Output format:
++// {
++//   "paint_ops": [
++//     { "type": "DrawRectOp", "rect": [...], "flags": {...} },
++//     { "type": "DrawTextBlobOp", ... },
++//     ...
++//   ]
++// }
++PLATFORM_EXPORT std::unique_ptr<JSONObject> SerializeRawPaintOps(
++    const PaintArtifact& artifact);
 +
-+#endif  // THIRD_PARTY_BLINK_RENDERER_PLATFORM_GRAPHICS_COMPOSITING_PAINT_ARTIFACT_JSON_SERIALIZER_H_
+ }  // namespace blink
+ 
+ #endif  // THIRD_PARTY_BLINK_RENDERER_PLATFORM_GRAPHICS_COMPOSITING_PAINT_ARTIFACT_JSON_SERIALIZER_H_

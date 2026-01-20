@@ -1,0 +1,878 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Raw Paint Ops Visualizer (No Chunks)</title>
+  <script src="https://unpkg.com/canvaskit-wasm@0.39.1/bin/canvaskit.js"></script>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; flex-direction: column; align-items: center; padding: 20px; background: #f0f2f5; margin: 0; }
+    h2 { color: #1a1a1a; margin-bottom: 5px; }
+    .subtitle { color: #666; margin-bottom: 20px; font-size: 0.9em; }
+    #canvas-container { box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06); border-radius: 8px; overflow: hidden; background: white; }
+    canvas { display: block; }
+    .controls { margin: 20px; display: flex; align-items: center; gap: 15px; background: white; padding: 10px 20px; border-radius: 50px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+    .layer-info { margin-top: 20px; background: white; padding: 20px; border-radius: 8px; font-size: 13px; width: 100%; max-width: 800px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    .layer-info h3 { margin-top: 0; border-bottom: 1px solid #eee; padding-bottom: 10px; }
+    pre { background: #f8f9fa; padding: 10px; border-radius: 4px; overflow-x: auto; white-space: pre-wrap; font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; max-height: 400px; overflow-y: auto; }
+    .error { color: #d32f2f; background: #ffebee; padding: 10px; border-radius: 4px; }
+    .badge { display: inline-block; background: #e8f5e9; color: #2e7d32; padding: 2px 8px; border-radius: 4px; font-size: 0.8em; margin-left: 10px; }
+  </style>
+</head>
+<body>
+  <h2>Raw Paint Ops Visualizer <span class="badge">No Chunks</span></h2>
+  <div class="subtitle">Rendering paint ops from raw_paint_ops.json (flat list with inline property tree IDs)</div>
+
+  <div id="canvas-container">
+    <canvas id="skcanvas" width="2000" height="20000"></canvas>
+  </div>
+
+  <div class="controls">
+    <label><input type="checkbox" id="chkDebug"> Debug Mode</label>
+  </div>
+
+  <div class="layer-info">
+    <h3>Status Log</h3>
+    <pre id="status">Initializing CanvasKit...</pre>
+    <h3>Paint Ops Summary</h3>
+    <pre id="layerList">Waiting for data...</pre>
+  </div>
+
+<script type="module">
+// ============================================
+// Property Trees Parser
+// ============================================
+
+class PropertyTrees {
+    constructor(data, CanvasKit) {
+        this.CK = CanvasKit;
+        this.transformNodes = new Map();
+        this.effectNodes = new Map();
+        this.clipNodes = new Map();
+
+        if (data.transform_tree && data.transform_tree.nodes) {
+            data.transform_tree.nodes.forEach(n => this.transformNodes.set(n.id, n));
+        }
+        if (data.effect_tree && data.effect_tree.nodes) {
+            data.effect_tree.nodes.forEach(n => this.effectNodes.set(n.id, n));
+        }
+        if (data.clip_tree && data.clip_tree.nodes) {
+            data.clip_tree.nodes.forEach(n => this.clipNodes.set(n.id, n));
+        }
+    }
+
+    // Get accumulated transform matrix for a given node ID
+    getTransformMatrix(nodeId) {
+        let chain = [];
+        let currentId = nodeId;
+
+        while(currentId !== -1 && this.transformNodes.has(currentId)) {
+            chain.push(this.transformNodes.get(currentId));
+            currentId = chain[chain.length-1].parent_id;
+        }
+
+        let result = this.CK.M44.identity();
+
+        // Apply transformations Root -> Leaf
+        for (let i = chain.length - 1; i >= 0; i--) {
+            const node = chain[i];
+
+            if (node.matrix && node.matrix.length === 16) {
+                result = this.CK.M44.multiply(result, node.matrix);
+            }
+            else if (node.local && node.local.length === 16) {
+                result = this.CK.M44.multiply(result, node.local);
+            }
+            else if (node.translation2d && node.translation2d.length === 2) {
+                const tx = node.translation2d[0];
+                const ty = node.translation2d[1];
+                const translateMatrix = [
+                    1, 0, 0, tx,
+                    0, 1, 0, ty,
+                    0, 0, 1, 0,
+                    0, 0, 0, 1
+                ];
+                result = this.CK.M44.multiply(result, translateMatrix);
+            }
+        }
+        return result;
+    }
+
+    getEffect(index) {
+        return this.effectNodes.get(index) || { opacity: 1.0, blend_mode: 'SrcOver' };
+    }
+
+    getClip(index) {
+        return this.clipNodes.get(index) || null;
+    }
+}
+
+// ============================================
+// Paint Op Renderer
+// ============================================
+
+class PaintOpRenderer {
+    constructor(canvasKit, fontMgr) {
+        this.ck = canvasKit;
+        this.fontMgr = fontMgr;
+        this.debug = false;
+        this.opLog = [];
+    }
+
+    log(msg) {
+        this.opLog.push(msg);
+    }
+
+    // Apply shadow/looper effect - draws the shape multiple times for each shadow layer
+    // Returns true if shadows were applied (caller should also draw the normal shape)
+    applyShadows(canvas, op, drawFn) {
+        if (!op.flags || !op.flags.shadows || op.flags.shadows.length === 0) {
+            return false;
+        }
+
+        // DrawLooper applies layers in reverse order (bottom to top)
+        // The last layer in the array typically has kDontModifyPaintFlag set,
+        // meaning it's the actual shape (drawn normally after shadows)
+        const shadows = op.flags.shadows;
+
+        for (let i = shadows.length - 1; i >= 0; i--) {
+            const shadow = shadows[i];
+
+            // kDontModifyPaintFlag (1 << 2 = 4) means don't modify paint, just translate
+            // This is typically the "original" draw, skip it here - we'll draw it normally
+            if (shadow.flags & 4) {
+                continue;
+            }
+
+            canvas.save();
+
+            // Apply offset - kPostTransformFlag (1 << 0 = 1) affects how offset is applied
+            const postTransform = shadow.flags & 1;
+            if (!postTransform) {
+                canvas.translate(shadow.offsetX, shadow.offsetY);
+            }
+
+            // Create shadow paint
+            const shadowPaint = new this.ck.Paint();
+            shadowPaint.setAntiAlias(true);
+            shadowPaint.setColor(this.ck.Color4f(
+                shadow.r || 0,
+                shadow.g || 0,
+                shadow.b || 0,
+                shadow.a || 1
+            ));
+            shadowPaint.setStyle(this.ck.PaintStyle.Fill);
+
+            // Apply blur if present
+            if (shadow.blurSigma > 0) {
+                const blurFilter = this.ck.MaskFilter.MakeBlur(
+                    this.ck.BlurStyle.Normal,
+                    shadow.blurSigma,
+                    !postTransform  // respectCTM
+                );
+                shadowPaint.setMaskFilter(blurFilter);
+            }
+
+            // kOverrideAlphaFlag (1 << 1 = 2) sets alpha to opaque
+            if (shadow.flags & 2) {
+                shadowPaint.setAlphaf(1.0);
+            }
+
+            if (postTransform) {
+                canvas.translate(shadow.offsetX, shadow.offsetY);
+            }
+
+            // Draw the shadow shape
+            drawFn(canvas, shadowPaint);
+
+            shadowPaint.delete();
+            canvas.restore();
+        }
+
+        return true;
+    }
+
+    renderOp(canvas, op) {
+        if (!op || !op.type) return;
+
+        switch (op.type) {
+            case 'SaveOp':
+                canvas.save();
+                break;
+
+            case 'RestoreOp':
+                canvas.restore();
+                break;
+
+            case 'TranslateOp':
+                canvas.translate(op.dx || 0, op.dy || 0);
+                if (this.debug) this.log(`Translate(${op.dx}, ${op.dy})`);
+                break;
+
+            case 'ScaleOp':
+                canvas.scale(op.sx || 1, op.sy || 1);
+                if (this.debug) this.log(`Scale(${op.sx}, ${op.sy})`);
+                break;
+
+            case 'RotateOp':
+                canvas.rotate(op.degrees || 0, 0, 0);
+                if (this.debug) this.log(`Rotate(${op.degrees})`);
+                break;
+
+            case 'ConcatOp':
+            case 'SetMatrixOp':
+                if (op.matrix && op.matrix.length === 16) {
+                    canvas.concat(op.matrix);
+                }
+                break;
+
+            case 'ClipRectOp':
+                if (op.rect && op.rect.length === 4) {
+                    const rect = this.ck.LTRBRect(op.rect[0], op.rect[1], op.rect[2], op.rect[3]);
+                    canvas.clipRect(rect, this.ck.ClipOp.Intersect, op.antiAlias !== false);
+                }
+                break;
+
+            case 'ClipRRectOp':
+                if (op.rect && op.radii) {
+                    const rect = this.ck.LTRBRect(op.rect[0], op.rect[1], op.rect[2], op.rect[3]);
+                    const rrect = this.ck.RRectXY(rect, op.radii[0] || 0, op.radii[1] || 0);
+                    canvas.clipRRect(rrect, this.ck.ClipOp.Intersect, op.antiAlias !== false);
+                }
+                break;
+
+            case 'ClipPathOp':
+                if (op.path) {
+                    const path = this.ck.Path.MakeFromSVGString(op.path);
+                    if (path) {
+                        canvas.clipPath(path, this.ck.ClipOp.Intersect, op.antiAlias !== false);
+                        path.delete();
+                    }
+                }
+                break;
+
+            case 'DrawRectOp':
+                this.drawRect(canvas, op);
+                break;
+
+            case 'DrawRRectOp':
+                this.drawRRect(canvas, op);
+                break;
+
+            case 'DrawDRRectOp':
+                this.drawDRRect(canvas, op);
+                break;
+
+            case 'DrawColorOp':
+                if (op.r !== undefined) {
+                    const color = this.ck.Color4f(op.r, op.g, op.b, op.a || 1);
+                    canvas.drawColorInt(color, this.ck.BlendMode.SrcOver);
+                }
+                break;
+
+            case 'DrawTextBlobOp':
+                this.drawTextBlob(canvas, op);
+                break;
+
+            case 'DrawRecordOp':
+                if (op.record && Array.isArray(op.record)) {
+                    for (const subOp of op.record) {
+                        this.renderOp(canvas, subOp);
+                    }
+                }
+                break;
+
+            case 'DrawPathOp':
+                this.drawPath(canvas, op);
+                break;
+
+            case 'DrawImageRectOp':
+                if (this.debug) this.log('DrawImageRectOp (skipped - no image data)');
+                break;
+
+            case 'SaveLayerOp':
+                this.saveLayer(canvas, op);
+                break;
+
+            case 'SaveLayerAlphaOp':
+                {
+                    const paint = new this.ck.Paint();
+                    paint.setAlphaf(op.alpha !== undefined ? op.alpha : 1);
+
+                    if (op.bounds && op.bounds.length === 4) {
+                        const bounds = this.ck.LTRBRect(op.bounds[0], op.bounds[1], op.bounds[2], op.bounds[3]);
+                        canvas.saveLayer(paint, bounds);
+                    } else {
+                        canvas.saveLayer(paint);
+                    }
+                    paint.delete();
+                }
+                break;
+
+            case 'NoopOp':
+                break;
+
+            default:
+                if (this.debug) this.log(`Unknown op: ${op.type}`);
+        }
+    }
+
+    drawRect(canvas, op) {
+        if (!op.rect || op.rect.length !== 4) return;
+
+        const rect = this.ck.LTRBRect(op.rect[0], op.rect[1], op.rect[2], op.rect[3]);
+
+        // Draw shadows first if present
+        this.applyShadows(canvas, op, (c, p) => {
+            c.drawRect(rect, p);
+        });
+
+        const paint = new this.ck.Paint();
+        paint.setAntiAlias(true);
+
+        if (op.flags && op.flags.shaderType && op.flags.gradientColors) {
+            const colors = op.flags.gradientColors.map(c =>
+                this.ck.Color4f(c.r || 0, c.g || 0, c.b || 0, c.a || 1)
+            );
+            const positions = op.flags.gradientPositions || null;
+
+            if (op.flags.shaderType === 'kLinearGradient' || op.flags.shaderType === 'LinearGradient') {
+                const startPt = op.flags.startPoint || [0, 0];
+                const endPt = op.flags.endPoint || [op.rect[2] - op.rect[0], op.rect[3] - op.rect[1]];
+                const shader = this.ck.Shader.MakeLinearGradient(
+                    startPt, endPt, colors, positions, this.ck.TileMode.Clamp
+                );
+                paint.setShader(shader);
+            } else if (op.flags.shaderType === 'kRadialGradient' || op.flags.shaderType === 'RadialGradient') {
+                const center = op.flags.center || [
+                    (op.rect[0] + op.rect[2]) / 2,
+                    (op.rect[1] + op.rect[3]) / 2
+                ];
+                const radius = op.flags.radius || Math.max(
+                    op.rect[2] - op.rect[0],
+                    op.rect[3] - op.rect[1]
+                ) / 2;
+                const shader = this.ck.Shader.MakeRadialGradient(
+                    center, radius, colors, positions, this.ck.TileMode.Clamp
+                );
+                paint.setShader(shader);
+            }
+        } else if (op.flags) {
+            const c = op.flags;
+            paint.setColor(this.ck.Color4f(c.r || 0, c.g || 0, c.b || 0, c.a || 1));
+        } else {
+            paint.setColor(this.ck.Color4f(0.5, 0.5, 0.5, 1));
+        }
+
+        paint.setStyle(this.ck.PaintStyle.Fill);
+
+        canvas.drawRect(rect, paint);
+
+        if (this.debug) {
+            const shaderInfo = op.flags?.shaderType ? ` shader=${op.flags.shaderType}` : '';
+            const shadowInfo = op.flags?.shadows ? ` shadows=${op.flags.shadows.length}` : '';
+            this.log(`DrawRect [${op.rect.join(', ')}]${shaderInfo}${shadowInfo}`);
+        }
+
+        paint.delete();
+    }
+
+    drawRRect(canvas, op) {
+        if (!op.rect) return;
+
+        const rect = this.ck.LTRBRect(op.rect[0], op.rect[1], op.rect[2], op.rect[3]);
+        const rx = op.radii ? op.radii[0] : 0;
+        const ry = op.radii ? op.radii[1] : 0;
+        const rrect = this.ck.RRectXY(rect, rx, ry);
+
+        // Draw shadows first if present
+        this.applyShadows(canvas, op, (c, p) => {
+            c.drawRRect(rrect, p);
+        });
+
+        const paint = new this.ck.Paint();
+        paint.setAntiAlias(true);
+
+        if (op.flags && op.flags.shaderType && op.flags.gradientColors) {
+            const colors = op.flags.gradientColors.map(c =>
+                this.ck.Color4f(c.r || 0, c.g || 0, c.b || 0, c.a || 1)
+            );
+            const positions = op.flags.gradientPositions || null;
+
+            if (op.flags.shaderType === 'kLinearGradient' || op.flags.shaderType === 'LinearGradient') {
+                const startPt = op.flags.startPoint || [op.rect[0], op.rect[1]];
+                const endPt = op.flags.endPoint || [op.rect[2], op.rect[3]];
+                const shader = this.ck.Shader.MakeLinearGradient(
+                    startPt, endPt, colors, positions, this.ck.TileMode.Clamp
+                );
+                paint.setShader(shader);
+            } else if (op.flags.shaderType === 'kRadialGradient' || op.flags.shaderType === 'RadialGradient') {
+                const center = op.flags.center || [
+                    (op.rect[0] + op.rect[2]) / 2,
+                    (op.rect[1] + op.rect[3]) / 2
+                ];
+                const radius = op.flags.radius || Math.max(
+                    op.rect[2] - op.rect[0],
+                    op.rect[3] - op.rect[1]
+                ) / 2;
+                const shader = this.ck.Shader.MakeRadialGradient(
+                    center, radius, colors, positions, this.ck.TileMode.Clamp
+                );
+                paint.setShader(shader);
+            }
+        } else if (op.flags) {
+            const c = op.flags;
+            paint.setColor(this.ck.Color4f(c.r || 0, c.g || 0, c.b || 0, c.a || 1));
+
+            if (c.style === 1) {
+                paint.setStyle(this.ck.PaintStyle.Stroke);
+                paint.setStrokeWidth(c.strokeWidth || 1);
+            } else {
+                paint.setStyle(this.ck.PaintStyle.Fill);
+            }
+        } else {
+            paint.setStyle(this.ck.PaintStyle.Fill);
+        }
+
+        canvas.drawRRect(rrect, paint);
+
+        paint.delete();
+    }
+
+    // Draw double rounded rect (area between outer and inner rrects)
+    // Used for borders and inset box-shadows
+    drawDRRect(canvas, op) {
+        if (!op.outer_rect || !op.inner_rect) {
+            if (this.debug) this.log('DrawDRRectOp missing outer/inner rect data');
+            return;
+        }
+
+        // Create outer rrect
+        const outerRect = this.ck.LTRBRect(
+            op.outer_rect[0], op.outer_rect[1], op.outer_rect[2], op.outer_rect[3]
+        );
+        const outerRx = op.outer_radii ? op.outer_radii[0] : 0;
+        const outerRy = op.outer_radii ? op.outer_radii[1] : 0;
+        const outerRRect = this.ck.RRectXY(outerRect, outerRx, outerRy);
+
+        // Create inner rrect
+        const innerRect = this.ck.LTRBRect(
+            op.inner_rect[0], op.inner_rect[1], op.inner_rect[2], op.inner_rect[3]
+        );
+        const innerRx = op.inner_radii ? op.inner_radii[0] : 0;
+        const innerRy = op.inner_radii ? op.inner_radii[1] : 0;
+        const innerRRect = this.ck.RRectXY(innerRect, innerRx, innerRy);
+
+        // Draw shadows first if present
+        this.applyShadows(canvas, op, (c, p) => {
+            c.drawDRRect(outerRRect, innerRRect, p);
+        });
+
+        const paint = new this.ck.Paint();
+        paint.setAntiAlias(true);
+
+        if (op.flags) {
+            const c = op.flags;
+            paint.setColor(this.ck.Color4f(c.r || 0, c.g || 0, c.b || 0, c.a || 1));
+
+            if (c.style === 1) {
+                paint.setStyle(this.ck.PaintStyle.Stroke);
+                paint.setStrokeWidth(c.strokeWidth || 1);
+            } else {
+                paint.setStyle(this.ck.PaintStyle.Fill);
+            }
+        } else {
+            paint.setColor(this.ck.Color4f(0.5, 0.5, 0.5, 1));
+            paint.setStyle(this.ck.PaintStyle.Fill);
+        }
+
+        // drawDRRect draws the area between outer and inner
+        canvas.drawDRRect(outerRRect, innerRRect, paint);
+
+        if (this.debug) {
+            this.log(`DrawDRRect outer=[${op.outer_rect.map(v => Math.round(v)).join(',')}] inner=[${op.inner_rect.map(v => Math.round(v)).join(',')}]`);
+        }
+
+        paint.delete();
+    }
+
+    drawPath(canvas, op) {
+        if (!op.path) return;
+
+        const path = this.ck.Path.MakeFromSVGString(op.path);
+        if (!path) return;
+
+        if (op.fillType !== undefined) {
+            const fillTypes = [
+                this.ck.FillType.Winding,
+                this.ck.FillType.EvenOdd,
+                this.ck.FillType.InverseWinding,
+                this.ck.FillType.InverseEvenOdd
+            ];
+            if (fillTypes[op.fillType]) {
+                path.setFillType(fillTypes[op.fillType]);
+            }
+        }
+
+        const paint = new this.ck.Paint();
+        if (op.flags) {
+            const r = op.flags.r !== undefined ? op.flags.r : 0;
+            const g = op.flags.g !== undefined ? op.flags.g : 0;
+            const b = op.flags.b !== undefined ? op.flags.b : 0;
+            const a = op.flags.a !== undefined ? op.flags.a : 1;
+            paint.setColor(this.ck.Color4f(r, g, b, a));
+
+            if (op.flags.style === 1) {
+                paint.setStyle(this.ck.PaintStyle.Stroke);
+            } else {
+                paint.setStyle(this.ck.PaintStyle.Fill);
+            }
+            if (op.flags.strokeWidth !== undefined) {
+                paint.setStrokeWidth(op.flags.strokeWidth);
+            }
+        }
+        paint.setAntiAlias(true);
+        canvas.drawPath(path, paint);
+        paint.delete();
+        path.delete();
+    }
+
+    saveLayer(canvas, op) {
+        const paint = new this.ck.Paint();
+        paint.setAntiAlias(true);
+
+        if (op.flags) {
+            const c = op.flags;
+            if (c.a !== undefined) {
+                paint.setAlphaf(c.a);
+            }
+        }
+
+        if (op.bounds && op.bounds.length === 4) {
+            const bounds = this.ck.LTRBRect(op.bounds[0], op.bounds[1], op.bounds[2], op.bounds[3]);
+            canvas.saveLayer(paint, bounds);
+        } else {
+            canvas.saveLayer(paint);
+        }
+        paint.delete();
+    }
+
+    drawTextBlob(canvas, op) {
+        if (op.runs && op.runs.length > 0) {
+            this.drawTextBlobWithRuns(canvas, op);
+            return;
+        }
+
+        if (this.debug) this.log(`DrawTextBlobOp at (${op.x}, ${op.y}) - no glyph data`);
+    }
+
+    drawTextBlobWithRuns(canvas, op) {
+        const paint = new this.ck.Paint();
+        paint.setAntiAlias(true);
+
+        if (op.flags) {
+            const c = op.flags;
+            paint.setColor(this.ck.Color4f(c.r || 0, c.g || 0, c.b || 0, c.a || 1));
+        } else {
+            paint.setColor(this.ck.BLACK);
+        }
+
+        const POSITIONING_DEFAULT = 0;
+        const POSITIONING_HORIZONTAL = 1;
+        const POSITIONING_FULL = 2;
+        const POSITIONING_RSXFORM = 3;
+
+        for (const run of op.runs) {
+            if (!run.glyphs || run.glyphCount <= 0) continue;
+
+            const glyphCount = run.glyphCount;
+            const positioning = run.positioning !== undefined ? run.positioning : POSITIONING_FULL;
+
+            const fontInfo = run.font || {};
+            const fontSize = fontInfo.size || 16;
+            const fontWeight = fontInfo.weight || 400;
+
+            const font = new window.CanvasKit.Font(window.typeface, fontSize);
+            font.setHinting(window.CanvasKit.FontHinting.Normal);
+            font.setSubpixel(true);
+            font.setEdging(window.CanvasKit.FontEdging.SubpixelAntiAlias);
+
+            if (fontWeight >= 600 || fontInfo.embolden) {
+                font.setEmbolden(true);
+            }
+
+            const glyphs = new Uint16Array(glyphCount);
+            for (let i = 0; i < glyphCount && i < run.glyphs.length; i++) {
+                glyphs[i] = run.glyphs[i];
+            }
+
+            const rsxforms = new Float32Array(glyphCount * 4);
+
+            if (positioning === POSITIONING_RSXFORM && run.rsxforms) {
+                for (let i = 0; i < glyphCount && i < run.rsxforms.length; i++) {
+                    const xf = run.rsxforms[i];
+                    rsxforms[i * 4]     = xf.scos || 1.0;
+                    rsxforms[i * 4 + 1] = xf.ssin || 0.0;
+                    rsxforms[i * 4 + 2] = xf.tx || 0;
+                    rsxforms[i * 4 + 3] = xf.ty || 0;
+                }
+            } else if (positioning === POSITIONING_FULL && run.positions) {
+                for (let i = 0; i < glyphCount && i < run.positions.length; i++) {
+                    const pos = run.positions[i];
+                    rsxforms[i * 4]     = 1.0;
+                    rsxforms[i * 4 + 1] = 0.0;
+                    rsxforms[i * 4 + 2] = pos.x || 0;
+                    rsxforms[i * 4 + 3] = pos.y || 0;
+                }
+            } else if (positioning === POSITIONING_HORIZONTAL && run.positions) {
+                for (let i = 0; i < glyphCount && i < run.positions.length; i++) {
+                    rsxforms[i * 4]     = 1.0;
+                    rsxforms[i * 4 + 1] = 0.0;
+                    rsxforms[i * 4 + 2] = run.positions[i] || 0;
+                    rsxforms[i * 4 + 3] = 0;
+                }
+            } else {
+                for (let i = 0; i < glyphCount; i++) {
+                    rsxforms[i * 4]     = 1.0;
+                    rsxforms[i * 4 + 1] = 0.0;
+                    rsxforms[i * 4 + 2] = 0;
+                    rsxforms[i * 4 + 3] = 0;
+                }
+            }
+
+            const blob = CanvasKit.TextBlob.MakeFromRSXformGlyphs(glyphs, rsxforms, font);
+            if (blob) {
+                const drawX = (op.x || 0) + (run.offsetX || 0);
+                const drawY = (op.y || 0) + (run.offsetY || 0);
+                canvas.drawTextBlob(blob, drawX, drawY, paint);
+                blob.delete();
+            }
+
+            font.delete();
+        }
+
+        paint.delete();
+    }
+}
+
+// ============================================
+// Raw Paint Ops Compositor
+// ============================================
+
+class RawPaintOpsCompositor {
+    constructor(canvasKit, surface) {
+        this.ck = canvasKit;
+        this.surface = surface;
+        this.renderer = new PaintOpRenderer(canvasKit, null);
+        this.debug = false;
+    }
+
+    drawFrame(paintOps, trees) {
+        const canvas = this.surface.getCanvas();
+        canvas.clear(this.ck.WHITE);
+
+        this.renderer.debug = this.debug;
+        this.renderer.opLog = [];
+
+        // Track current property tree state for efficient state changes
+        let currentTransformId = null;
+        let currentEffectId = null;
+        let effectLayerStack = [];
+
+        for (const op of paintOps) {
+            // Check if we need to change transform
+            if (op.transform_id !== currentTransformId) {
+                // Reset to identity and apply new transform
+                canvas.restore();
+                canvas.save();
+
+                const matrix = trees.getTransformMatrix(op.transform_id);
+                canvas.concat(matrix);
+                currentTransformId = op.transform_id;
+            }
+
+            // Check if we need to change effect (opacity/blend mode)
+            if (op.effect_id !== currentEffectId) {
+                // Close any existing effect layers
+                while (effectLayerStack.length > 0) {
+                    canvas.restore();
+                    effectLayerStack.pop();
+                }
+
+                // Apply new effect if needed
+                const effect = trees.getEffect(op.effect_id);
+                if (effect && effect.opacity < 1.0) {
+                    const layerPaint = new this.ck.Paint();
+                    layerPaint.setAlphaf(effect.opacity);
+                    canvas.saveLayer(layerPaint);
+                    layerPaint.delete();
+                    effectLayerStack.push(op.effect_id);
+                }
+
+                currentEffectId = op.effect_id;
+            }
+
+            // Render the paint op
+            this.renderer.renderOp(canvas, op);
+        }
+
+        // Clean up any remaining effect layers
+        while (effectLayerStack.length > 0) {
+            canvas.restore();
+            effectLayerStack.pop();
+        }
+
+        this.surface.flush();
+        return this.renderer.opLog;
+    }
+}
+
+// ============================================
+// Main
+// ============================================
+
+async function main() {
+    const statusEl = document.getElementById('status');
+    const layerListEl = document.getElementById('layerList');
+
+    try {
+        // 1. Initialize CanvasKit
+        const CanvasKit = await CanvasKitInit({
+            locateFile: (file) => `https://unpkg.com/canvaskit-wasm@0.39.1/bin/${file}`,
+        });
+        statusEl.textContent = "CanvasKit loaded. Fetching raw paint ops data...";
+
+        // 2. Fetch Raw Paint Ops Data (includes property trees)
+        const rawOpsRes = await fetch('raw_paint_ops.json');
+
+        if (!rawOpsRes.ok) {
+            throw new Error(`HTTP Error: ${rawOpsRes.status}`);
+        }
+
+        const rawOpsData = await rawOpsRes.json();
+        statusEl.textContent = "Raw paint ops data loaded. Setting up canvas...";
+
+        const paintOps = rawOpsData.paint_ops || [];
+
+        // 3. Setup Surface
+        const canvasEl = document.getElementById('skcanvas');
+
+        // Calculate canvas size from paint ops bounds
+        let maxW = 320, maxH = 148;
+        for (const op of paintOps) {
+            if (op.rect && op.rect.length === 4) {
+                maxW = Math.max(maxW, op.rect[2]);
+                maxH = Math.max(maxH, op.rect[3]);
+            }
+            if (op.bounds && op.bounds.length === 4) {
+                maxW = Math.max(maxW, op.bounds[2]);
+                maxH = Math.max(maxH, op.bounds[3]);
+            }
+            // DrawDRRectOp uses outer_rect
+            if (op.outer_rect && op.outer_rect.length === 4) {
+                maxW = Math.max(maxW, op.outer_rect[2]);
+                maxH = Math.max(maxH, op.outer_rect[3]);
+            }
+        }
+
+        console.log(`Canvas size: ${maxW}x${maxH}`);
+        canvasEl.width = Math.min(maxW + 100, 3000);
+        canvasEl.height = Math.min(maxH + 100, 25000);
+
+        // Load font
+        const fontResp = await fetch("Arial.ttf");
+        const fontData = await fontResp.arrayBuffer();
+        const typeface = CanvasKit.Typeface.MakeFreeTypeFaceFromData(fontData);
+
+        if (!typeface) {
+          console.error("Failed to load typeface");
+          statusEl.innerHTML = `<span class="error">Failed to load Arial.ttf font file</span>`;
+          return;
+        }
+
+        window.typeface = typeface;
+        window.CanvasKit = CanvasKit;
+
+        const surface = CanvasKit.MakeCanvasSurface('skcanvas');
+        if (!surface) throw new Error("Could not create Skia surface");
+
+        // 4. Initialize compositor with property trees from the same file
+        const propertyTrees = new PropertyTrees(rawOpsData, CanvasKit);
+        const compositor = new RawPaintOpsCompositor(CanvasKit, surface);
+
+        // 5. Render function
+        const redraw = () => {
+            compositor.debug = document.getElementById('chkDebug').checked;
+
+            const log = compositor.drawFrame(paintOps, propertyTrees);
+
+            // Show paint ops summary
+            const opTypes = {};
+            const transformIds = new Set();
+            const effectIds = new Set();
+            const clipIds = new Set();
+
+            for (const op of paintOps) {
+                opTypes[op.type] = (opTypes[op.type] || 0) + 1;
+                if (op.transform_id !== undefined) transformIds.add(op.transform_id);
+                if (op.effect_id !== undefined) effectIds.add(op.effect_id);
+                if (op.clip_id !== undefined) clipIds.add(op.clip_id);
+            }
+
+            let info = `Total Paint Ops: ${paintOps.length}\n\n`;
+            info += `--- Op Types ---\n`;
+            for (const [type, count] of Object.entries(opTypes).sort((a, b) => b[1] - a[1])) {
+                info += `  ${type}: ${count}\n`;
+            }
+
+            info += `\n--- Property Tree Usage ---\n`;
+            info += `  Unique transform_ids: ${transformIds.size} (${[...transformIds].slice(0, 10).join(', ')}${transformIds.size > 10 ? '...' : ''})\n`;
+            info += `  Unique effect_ids: ${effectIds.size} (${[...effectIds].join(', ')})\n`;
+            info += `  Unique clip_ids: ${clipIds.size} (${[...clipIds].slice(0, 10).join(', ')}${clipIds.size > 10 ? '...' : ''})\n`;
+
+            // Show effects with opacity < 1
+            info += `\n--- Effects with Opacity < 1.0 ---\n`;
+            for (const effectId of effectIds) {
+                const effect = propertyTrees.getEffect(effectId);
+                if (effect && effect.opacity < 1.0) {
+                    info += `  effect_id ${effectId}: opacity=${effect.opacity}, blend_mode=${effect.blend_mode}\n`;
+                }
+            }
+
+            // Show first few ops
+            info += `\n--- First 20 Paint Ops ---\n`;
+            for (let i = 0; i < Math.min(20, paintOps.length); i++) {
+                const op = paintOps[i];
+                let opInfo = `${i}: ${op.type}`;
+                if (op.rect) opInfo += ` rect=[${op.rect.map(v => Math.round(v)).join(',')}]`;
+                opInfo += ` t=${op.transform_id} e=${op.effect_id} c=${op.clip_id}`;
+                info += `  ${opInfo}\n`;
+            }
+            if (paintOps.length > 20) {
+                info += `  ... and ${paintOps.length - 20} more ops\n`;
+            }
+
+            if (log.length > 0) {
+                info += `\nDebug log:\n${log.join('\n')}`;
+            }
+
+            layerListEl.textContent = info;
+        };
+
+        redraw();
+        statusEl.textContent = `Rendered ${paintOps.length} paint ops successfully (flat list, no chunks).`;
+
+        // 6. Bind controls
+        document.querySelectorAll('input').forEach(el => {
+            el.addEventListener('change', redraw);
+        });
+
+    } catch (e) {
+        console.error(e);
+        statusEl.innerHTML = `<span class="error">${e.message}</span><br><br>Make sure <b>raw_paint_ops.json</b> exists in the same folder.`;
+    }
+}
+
+main();
+
+</script>
+</body>
+</html>
