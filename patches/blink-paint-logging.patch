@@ -48,6 +48,26 @@ index c04a907ff8..5c977caf3e 100644
    std::vector<Layer> layers_;
  
    explicit DrawLooper(std::vector<Layer> l);
+diff --git a/cc/paint/paint_shader.h b/cc/paint/paint_shader.h
+index 29dc5c26dd..95dd6333f7 100644
+--- a/cc/paint/paint_shader.h
++++ b/cc/paint/paint_shader.h
+@@ -196,6 +196,15 @@ class CC_PAINT_EXPORT PaintShader : public SkRefCnt {
+   SkTileMode ty() const { return ty_; }
+   SkRect tile() const { return tile_; }
+ 
++  // Gradient accessors for serialization
++  const std::vector<SkColor4f>& colors() const { return colors_; }
++  const std::vector<SkScalar>& positions() const { return positions_; }
++  SkPoint start_point() const { return start_point_; }
++  SkPoint end_point() const { return end_point_; }
++  SkPoint center() const { return center_; }
++  SkScalar start_radius() const { return start_radius_; }
++  SkScalar end_radius() const { return end_radius_; }
++
+   bool IsOpaque() const;
+ 
+   // Returns true if the shader looks like it is valid (ie the members required
 diff --git a/third_party/blink/renderer/platform/BUILD.gn b/third_party/blink/renderer/platform/BUILD.gn
 index e2256766d7..351700eb0b 100644
 --- a/third_party/blink/renderer/platform/BUILD.gn
