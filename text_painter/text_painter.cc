@@ -327,7 +327,8 @@ PaintOpList TextPainter::Paint(const TextPaintInput& input) {
   if (has_decorations) {
     PaintDecorationsExceptLineThrough(ops, input.decorations, input.box,
                                       font_size, ascent, descent,
-                                      input.state_ids);
+                                      input.state_ids, effective_style.shadow,
+                                      scaling_factor);
   }
 
   // === Paint text ===
@@ -361,7 +362,8 @@ PaintOpList TextPainter::Paint(const TextPaintInput& input) {
   if (has_decorations) {
     PaintDecorationsLineThrough(ops, input.decorations, input.box,
                                 font_size, ascent, descent,
-                                input.state_ids);
+                                input.state_ids, effective_style.shadow,
+                                scaling_factor);
   }
 
   // === Paint emphasis marks ===
