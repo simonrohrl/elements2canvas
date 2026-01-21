@@ -29,10 +29,19 @@ def find_layout_texts(layout_tree):
     return texts
 
 
-def match_with_raw_ops(layout_text, raw_ops):
-    """Match LayoutText with corresponding DrawTextBlobOp by glyphs."""
+def match_with_raw_ops(layout_text, raw_ops, used_indices):
+    """Match LayoutText with corresponding DrawTextBlobOp by glyphs.
+
+    Args:
+        layout_text: LayoutText node from layout_tree.json
+        raw_ops: List of paint ops from raw_paint_ops.json
+        used_indices: Set of already-used op indices (modified in place)
+
+    Returns:
+        Tuple of (matched_op, op_index) or (None, -1) if no match
+    """
     if not layout_text.get('fragments'):
-        return None
+        return None, -1
 
     for frag in layout_text['fragments']:
         if not frag.get('runs'):
@@ -42,7 +51,10 @@ def match_with_raw_ops(layout_text, raw_ops):
                 continue
             lt_glyphs = run['glyphs']
 
-            for op in raw_ops:
+            for idx, op in enumerate(raw_ops):
+                # Skip already-used ops to ensure 1:1 matching
+                if idx in used_indices:
+                    continue
                 if op.get('type') != 'DrawTextBlobOp':
                     continue
                 if not op.get('runs'):
@@ -50,8 +62,8 @@ def match_with_raw_ops(layout_text, raw_ops):
                 for op_run in op['runs']:
                     op_glyphs = op_run.get('glyphs', [])
                     if lt_glyphs == op_glyphs:
-                        return op
-    return None
+                        return op, idx
+    return None, -1
 
 
 def create_text_painter_input(layout_text, matched_op, property_trees):
@@ -104,11 +116,11 @@ def create_text_painter_input(layout_text, matched_op, property_trees):
                         "ascent": 14,
                         "descent": 4
                     }),
-                    "glyphs": run['glyphs'],
-                    "positions": run['positions'],
+                    "glyphs": op_run['glyphs'],      # Use matched_op glyphs
+                    "positions": op_run['positions'], # Use matched_op positions
                     "offsetX": op_run.get('offsetX', 0),
                     "offsetY": op_run.get('offsetY', 0),
-                    "positioning": run.get('positioning', 1)
+                    "positioning": op_run.get('positioning', 1)  # Use matched_op positioning
                 }]
             }
         },
@@ -164,10 +176,14 @@ def main():
     layout_texts = find_layout_texts(layout_tree)
     print(f"  Found {len(layout_texts)} LayoutText nodes with glyph data")
 
+    # Track used raw_ops indices to ensure 1:1 matching
+    used_indices = set()
     matched_count = 0
+
     for i, lt in enumerate(layout_texts):
-        matched_op = match_with_raw_ops(lt, raw_ops)
+        matched_op, op_idx = match_with_raw_ops(lt, raw_ops, used_indices)
         if matched_op:
+            used_indices.add(op_idx)  # Mark this op as used
             input_data = create_text_painter_input(lt, matched_op, property_trees)
             output_file = os.path.join(output_dir, f"input_{i:03d}.json")
             with open(output_file, 'w') as f:
