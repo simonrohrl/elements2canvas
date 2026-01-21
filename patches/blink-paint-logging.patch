@@ -1166,10 +1166,10 @@ new file mode 100644
 index 0000000000..e69de29bb2
 diff --git a/third_party/blink/renderer/platform/graphics/paint/paint_artifact_serializer.cc b/third_party/blink/renderer/platform/graphics/paint/paint_artifact_serializer.cc
 new file mode 100644
-index 0000000000..b78ad0b87c
+index 0000000000..ed812e65ac
 --- /dev/null
 +++ b/third_party/blink/renderer/platform/graphics/paint/paint_artifact_serializer.cc
-@@ -0,0 +1,636 @@
+@@ -0,0 +1,638 @@
 +// Copyright 2024 The Chromium Authors
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -1669,6 +1669,8 @@ index 0000000000..b78ad0b87c
 +      flags_json->SetDouble("g", color.fG);
 +      flags_json->SetDouble("b", color.fB);
 +      flags_json->SetDouble("a", color.fA);
++      // Serialize blend mode for compositing (used for background-clip: text, etc.)
++      json->SetInteger("blendMode", static_cast<int>(save_op.flags.getBlendMode()));
 +      // Check for image filter (used for blur, drop shadow, etc.)
 +      const auto& image_filter = save_op.flags.getImageFilter();
 +      if (image_filter) {
