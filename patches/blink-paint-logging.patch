@@ -81,7 +81,7 @@ index 00357e6c40..88fe9317f9 100644
  
    FRIEND_TEST_ALL_PREFIXES(PaintLayerTest,
 diff --git a/third_party/blink/renderer/core/paint/paint_layer_painter.cc b/third_party/blink/renderer/core/paint/paint_layer_painter.cc
-index 317149bc68..667b7fa025 100644
+index 317149bc68..d3fa91c590 100644
 --- a/third_party/blink/renderer/core/paint/paint_layer_painter.cc
 +++ b/third_party/blink/renderer/core/paint/paint_layer_painter.cc
 @@ -4,8 +4,12 @@
@@ -97,19 +97,22 @@ index 317149bc68..667b7fa025 100644
  #include "cc/layers/view_transition_content_layer.h"
  #include "third_party/blink/renderer/core/frame/local_frame.h"
  #include "third_party/blink/renderer/core/frame/local_frame_view.h"
-@@ -26,6 +30,11 @@
+@@ -26,6 +30,14 @@
  #include "third_party/blink/renderer/core/paint/paint_layer.h"
  #include "third_party/blink/renderer/core/paint/paint_layer_paint_order_iterator.h"
  #include "third_party/blink/renderer/core/paint/paint_layer_scrollable_area.h"
 +#include "third_party/blink/renderer/core/paint/paint_layer_stacking_node.h"
 +#include "third_party/blink/renderer/core/layout/layout_text.h"
++#include "third_party/blink/renderer/core/layout/layout_box.h"
 +#include "third_party/blink/renderer/core/layout/inline/fragment_item.h"
 +#include "third_party/blink/renderer/core/layout/inline/inline_cursor.h"
++#include "third_party/blink/renderer/core/css/properties/longhands.h"
++#include "third_party/blink/renderer/core/style/shadow_data.h"
 +#include "third_party/blink/renderer/platform/fonts/shaping/shape_result_view.h"
  #include "third_party/blink/renderer/core/paint/scrollable_area_painter.h"
  #include "third_party/blink/renderer/core/paint/svg_mask_painter.h"
  #include "third_party/blink/renderer/core/paint/timing/paint_timing_detector.h"
-@@ -33,12 +42,14 @@
+@@ -33,12 +45,14 @@
  #include "third_party/blink/renderer/platform/graphics/paint/drawing_recorder.h"
  #include "third_party/blink/renderer/platform/graphics/paint/foreign_layer_display_item.h"
  #include "third_party/blink/renderer/platform/graphics/paint/geometry_mapper.h"
@@ -125,7 +128,7 @@ index 317149bc68..667b7fa025 100644
  #include "ui/gfx/geometry/point3_f.h"
  
  namespace blink {
-@@ -141,28 +152,417 @@ scoped_refptr<cc::ViewTransitionContentLayer> GetTransitionScopeSnapshotLayer(
+@@ -141,28 +155,537 @@ scoped_refptr<cc::ViewTransitionContentLayer> GetTransitionScopeSnapshotLayer(
    return nullptr;
  }
  
@@ -341,6 +344,126 @@ index 317149bc68..667b7fa025 100644
 +    json->SetArray("fragments", std::move(fragments_array));
 +  }
 +
++  // === FULL BOX MODEL DATA ===
++  if (object.IsBox()) {
++    const auto& box = To<LayoutBox>(object);
++    const ComputedStyle& style = object.StyleRef();
++
++    // 1. GEOMETRY (absolute coordinates)
++    auto geometry = std::make_unique<JSONObject>();
++    PhysicalRect border_box = box.PhysicalBorderBoxRect();
++    // Transform to absolute document coordinates
++    PhysicalOffset offset = box.LocalToAbsolutePoint(PhysicalOffset());
++    geometry->SetDouble("x", (border_box.X() + offset.left).ToDouble());
++    geometry->SetDouble("y", (border_box.Y() + offset.top).ToDouble());
++    geometry->SetDouble("width", border_box.Width().ToDouble());
++    geometry->SetDouble("height", border_box.Height().ToDouble());
++    json->SetObject("geometry", std::move(geometry));
++
++    // 2. BORDER RADII (8 values)
++    if (style.HasBorderRadius()) {
++      const auto& radii = style.BorderRadii();
++      auto radii_array = std::make_unique<JSONArray>();
++      radii_array->PushDouble(radii.TopLeft().Width().ToDouble());
++      radii_array->PushDouble(radii.TopLeft().Height().ToDouble());
++      radii_array->PushDouble(radii.TopRight().Width().ToDouble());
++      radii_array->PushDouble(radii.TopRight().Height().ToDouble());
++      radii_array->PushDouble(radii.BottomRight().Width().ToDouble());
++      radii_array->PushDouble(radii.BottomRight().Height().ToDouble());
++      radii_array->PushDouble(radii.BottomLeft().Width().ToDouble());
++      radii_array->PushDouble(radii.BottomLeft().Height().ToDouble());
++      json->SetArray("border_radii", std::move(radii_array));
++    }
++
++    // 3. BORDER WIDTHS
++    if (style.HasBorder()) {
++      auto border = std::make_unique<JSONObject>();
++      border->SetDouble("top", style.BorderTopWidth().ToDouble());
++      border->SetDouble("right", style.BorderRightWidth().ToDouble());
++      border->SetDouble("bottom", style.BorderBottomWidth().ToDouble());
++      border->SetDouble("left", style.BorderLeftWidth().ToDouble());
++      json->SetObject("border_widths", std::move(border));
++
++      // 3b. BORDER COLORS
++      auto border_colors = std::make_unique<JSONObject>();
++      auto serialize_border_color = [&style](const CSSProperty& property) {
++        Color c = style.VisitedDependentColor(property);
++        auto obj = std::make_unique<JSONObject>();
++        obj->SetDouble("r", c.Red() / 255.0);
++        obj->SetDouble("g", c.Green() / 255.0);
++        obj->SetDouble("b", c.Blue() / 255.0);
++        obj->SetDouble("a", c.AlphaF());
++        return obj;
++      };
++      border_colors->SetObject("top", serialize_border_color(GetCSSPropertyBorderTopColor()));
++      border_colors->SetObject("right", serialize_border_color(GetCSSPropertyBorderRightColor()));
++      border_colors->SetObject("bottom", serialize_border_color(GetCSSPropertyBorderBottomColor()));
++      border_colors->SetObject("left", serialize_border_color(GetCSSPropertyBorderLeftColor()));
++      json->SetObject("border_colors", std::move(border_colors));
++    }
++
++    // 4. PADDING
++    auto padding = std::make_unique<JSONObject>();
++    padding->SetDouble("top", box.PaddingTop().ToDouble());
++    padding->SetDouble("right", box.PaddingRight().ToDouble());
++    padding->SetDouble("bottom", box.PaddingBottom().ToDouble());
++    padding->SetDouble("left", box.PaddingLeft().ToDouble());
++    json->SetObject("padding", std::move(padding));
++
++    // 5. MARGIN
++    auto margin = std::make_unique<JSONObject>();
++    margin->SetDouble("top", box.MarginTop().ToDouble());
++    margin->SetDouble("right", box.MarginRight().ToDouble());
++    margin->SetDouble("bottom", box.MarginBottom().ToDouble());
++    margin->SetDouble("left", box.MarginLeft().ToDouble());
++    json->SetObject("margin", std::move(margin));
++
++    // 6. BACKGROUND COLOR
++    if (style.HasBackground()) {
++      Color bg = style.VisitedDependentColor(GetCSSPropertyBackgroundColor());
++      auto bg_color = std::make_unique<JSONObject>();
++      bg_color->SetDouble("r", bg.Red() / 255.0);
++      bg_color->SetDouble("g", bg.Green() / 255.0);
++      bg_color->SetDouble("b", bg.Blue() / 255.0);
++      bg_color->SetDouble("a", bg.AlphaF());
++      json->SetObject("background_color", std::move(bg_color));
++    }
++
++    // 7. BOX SHADOW
++    if (style.BoxShadow()) {
++      auto shadows_array = std::make_unique<JSONArray>();
++      for (const ShadowData* shadow = style.BoxShadow(); shadow;
++           shadow = shadow->Next()) {
++        auto shadow_json = std::make_unique<JSONObject>();
++        shadow_json->SetDouble("offset_x", shadow->X().ToDouble());
++        shadow_json->SetDouble("offset_y", shadow->Y().ToDouble());
++        shadow_json->SetDouble("blur", shadow->Blur().ToDouble());
++        shadow_json->SetDouble("spread", shadow->Spread().ToDouble());
++        shadow_json->SetBoolean("inset", shadow->Style() == ShadowStyle::kInset);
++        Color c = shadow->GetColor().Resolve(style.GetCurrentColor(),
++                                              style.UsedColorScheme());
++        auto color = std::make_unique<JSONObject>();
++        color->SetDouble("r", c.Red() / 255.0);
++        color->SetDouble("g", c.Green() / 255.0);
++        color->SetDouble("b", c.Blue() / 255.0);
++        color->SetDouble("a", c.AlphaF());
++        shadow_json->SetObject("color", std::move(color));
++        shadows_array->PushObject(std::move(shadow_json));
++      }
++      json->SetArray("box_shadow", std::move(shadows_array));
++    }
++  }
++
++  // 8. PROPERTY TREE STATE IDS (for all objects, not just boxes)
++  if (object.FirstFragment().HasLocalBorderBoxProperties()) {
++    const auto& props = object.FirstFragment().LocalBorderBoxProperties();
++    auto state = std::make_unique<JSONObject>();
++    state->SetInteger("transform_id", props.Transform().Id());
++    state->SetInteger("clip_id", props.Clip().Id());
++    state->SetInteger("effect_id", props.Effect().Id());
++    json->SetObject("state_ids", std::move(state));
++  }
++
 +  return json;
 +}
 +
@@ -547,7 +670,7 @@ index 317149bc68..667b7fa025 100644
  
    return false;
  }
-@@ -200,19 +600,25 @@ static bool ShouldCreateSubsequence(const PaintLayer& paint_layer,
+@@ -200,19 +723,25 @@ static bool ShouldCreateSubsequence(const PaintLayer& paint_layer,
                                      const GraphicsContext& context,
                                      PaintFlags paint_flags) {
    // Caching is not needed during printing or painting previews.
@@ -577,7 +700,7 @@ index 317149bc68..667b7fa025 100644
  
    // Create subsequence if the layer will create a paint chunk because of
    // different properties.
-@@ -272,8 +678,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
+@@ -272,8 +801,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
      return kFullyPainted;
    }
  
@@ -588,7 +711,7 @@ index 317149bc68..667b7fa025 100644
  
    if (object.IsFragmentLessBox()) {
      return kFullyPainted;
-@@ -282,8 +689,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
+@@ -282,8 +812,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
    // Non self-painting layers without self-painting descendants don't need to be
    // painted as their layoutObject() should properly paint itself.
    if (!paint_layer_.IsSelfPaintingLayer() &&
@@ -599,7 +722,7 @@ index 317149bc68..667b7fa025 100644
  
    std::optional<CheckAncestorPositionVisibilityScope>
        check_position_visibility_scope;
-@@ -304,10 +712,103 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
+@@ -304,10 +835,103 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
      return kMayBeClippedByCullRect;
    }
  
@@ -704,7 +827,7 @@ index 317149bc68..667b7fa025 100644
  
    IgnorePaintTimingScope ignore_paint_timing;
    if (object.StyleRef().Opacity() == 0.0f) {
-@@ -344,8 +845,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
+@@ -344,8 +968,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
      gfx::Rect visual_rect = FirstFragmentVisualRect(object);
      gfx::Rect cull_rect = object.FirstFragment().GetCullRect().Rect();
      bool cull_rect_intersects_self = cull_rect.Intersects(visual_rect);
@@ -715,7 +838,7 @@ index 317149bc68..667b7fa025 100644
  
      bool cull_rect_intersects_contents = true;
      if (const auto* box = DynamicTo<LayoutBox>(object)) {
-@@ -355,8 +857,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
+@@ -355,8 +980,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
            object.FirstFragment().GetContentsCullRect().Rect());
        cull_rect_intersects_contents =
            contents_cull_rect.Intersects(contents_visual_rect);
@@ -726,7 +849,7 @@ index 317149bc68..667b7fa025 100644
      } else {
        cull_rect_intersects_contents = cull_rect_intersects_self;
      }
-@@ -391,8 +894,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
+@@ -391,8 +1017,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
    PaintController& controller = context.GetPaintController();
  
    std::optional<ScopedEffectivelyInvisible> effectively_invisible;
@@ -737,7 +860,7 @@ index 317149bc68..667b7fa025 100644
  
    std::optional<ScopedPaintChunkProperties> layer_chunk_properties;
  
-@@ -433,8 +937,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
+@@ -433,8 +1060,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
    }
  
    if (PaintChildren(kNegativeZOrderChildren, context, paint_flags) ==
@@ -748,7 +871,7 @@ index 317149bc68..667b7fa025 100644
  
    if (should_paint_content) {
      // If the negative-z-order children created paint chunks, this gives the
-@@ -455,18 +960,21 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
+@@ -455,18 +1083,21 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
        is_self_painting_layer && object.StyleRef().HasOutline();
  
    bool is_video = IsA<LayoutVideo>(object);
@@ -773,7 +896,7 @@ index 317149bc68..667b7fa025 100644
      // Otherwise the overlay overflow controls will be painted after scrolling
      // children in PaintChildren().
    }
-@@ -488,8 +996,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
+@@ -488,8 +1119,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
            PaintWithPhase(PaintPhase::kMask, context, paint_flags);
          }
        }
@@ -784,7 +907,7 @@ index 317149bc68..667b7fa025 100644
      }
      if (PaintTransitionPseudos(context, object, paint_flags) ==
          kMayBeClippedByCullRect) {
-@@ -564,8 +1073,9 @@ PaintResult PaintLayerPainter::PaintChildren(
+@@ -564,8 +1196,9 @@ PaintResult PaintLayerPainter::PaintChildren(
      GraphicsContext& context,
      PaintFlags paint_flags) {
    PaintResult result = kFullyPainted;
@@ -795,7 +918,7 @@ index 317149bc68..667b7fa025 100644
  
    LayoutObject& layout_object = paint_layer_.GetLayoutObject();
    if (layout_object.ChildPaintBlockedByDisplayLock()) {
-@@ -579,8 +1089,9 @@ PaintResult PaintLayerPainter::PaintChildren(
+@@ -579,8 +1212,9 @@ PaintResult PaintLayerPainter::PaintChildren(
  
    PaintLayerPaintOrderIterator iterator(&paint_layer_, children_to_visit);
    while (PaintLayer* child = iterator.Next()) {
@@ -806,7 +929,7 @@ index 317149bc68..667b7fa025 100644
  
      if (!layout_object.IsViewTransitionRoot() &&
          ViewTransitionUtils::IsViewTransitionRoot(child->GetLayoutObject())) {
-@@ -591,8 +1102,9 @@ PaintResult PaintLayerPainter::PaintChildren(
+@@ -591,8 +1225,9 @@ PaintResult PaintLayerPainter::PaintChildren(
      }
  
      if (PaintLayerPainter(*child).Paint(context, paint_flags) ==
@@ -817,7 +940,7 @@ index 317149bc68..667b7fa025 100644
  
      if (const auto* layers_painting_overlay_overflow_controls_after =
              iterator.LayersPaintingOverlayOverflowControlsAfter(child)) {
-@@ -632,8 +1144,9 @@ void PaintLayerPainter::PaintFragmentWithPhase(
+@@ -632,8 +1267,9 @@ void PaintLayerPainter::PaintFragmentWithPhase(
           phase == PaintPhase::kOverlayOverflowControls);
  
    CullRect cull_rect = fragment_data.GetCullRect();
@@ -828,7 +951,7 @@ index 317149bc68..667b7fa025 100644
  
    auto chunk_properties = fragment_data.LocalBorderBoxProperties();
    if (phase == PaintPhase::kMask) {
-@@ -691,14 +1204,16 @@ void PaintLayerPainter::PaintWithPhase(PaintPhase phase,
+@@ -691,14 +1327,16 @@ void PaintLayerPainter::PaintWithPhase(PaintPhase phase,
      }
  
      std::optional<ScopedDisplayItemFragment> scoped_display_item_fragment;
