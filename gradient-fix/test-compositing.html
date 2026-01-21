@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Test DstIn Compositing</title>
+  <script src="https://unpkg.com/canvaskit-wasm@0.39.1/bin/canvaskit.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 40px; }
+    canvas { border: 1px solid #ccc; }
+  </style>
+</head>
+<body>
+  <h2>Testing DstIn Compositing for Gradient Text</h2>
+  <p>This should show gradient text using saveLayer with DstIn blend mode</p>
+  <canvas id="canvas1" width="600" height="100"></canvas>
+  <pre id="log"></pre>
+
+<script>
+async function main() {
+    const log = (msg) => {
+        document.getElementById('log').textContent += msg + '\n';
+        console.log(msg);
+    };
+
+    const CanvasKit = await CanvasKitInit({
+        locateFile: (file) => `https://unpkg.com/canvaskit-wasm@0.39.1/bin/${file}`,
+    });
+    log('CanvasKit loaded');
+
+    // Load font
+    const fontResp = await fetch("../Arial.ttf");
+    const fontData = await fontResp.arrayBuffer();
+    const typeface = CanvasKit.Typeface.MakeFreeTypeFaceFromData(fontData);
+    log('Font loaded');
+
+    const surface = CanvasKit.MakeCanvasSurface('canvas1');
+    const canvas = surface.getCanvas();
+    canvas.clear(CanvasKit.Color(240, 240, 240, 255));
+
+    // Simulate the gradient text compositing from raw_paint_ops.json:
+    // 1. SaveOp (for clip)
+    // 2. ClipRectOp
+    // 3. SaveLayerOp with blendMode 3 (SrcOver)
+    // 4. DrawRectOp with gradient
+    // 5. SaveLayerOp with blendMode 6 (DstIn)
+    // 6. DrawTextBlobOp with black
+    // 7-9. RestoreOp x3
+
+    const textX = 20;
+    const textY = 60;
+    const textWidth = 400;
+    const textHeight = 55;
+
+    // Step 1: Save for clip
+    canvas.save();
+    log('1. canvas.save()');
+
+    // Step 2: Clip to text area
+    const clipRect = CanvasKit.LTRBRect(textX, textY - 45, textX + textWidth, textY + 15);
+    canvas.clipRect(clipRect, CanvasKit.ClipOp.Intersect, false);
+    log('2. canvas.clipRect()');
+
+    // Step 3: SaveLayer with SrcOver (blendMode 3)
+    const layerPaint1 = new CanvasKit.Paint();
+    layerPaint1.setBlendMode(CanvasKit.BlendMode.SrcOver);
+    canvas.saveLayer(layerPaint1);
+    layerPaint1.delete();
+    log('3. canvas.saveLayer(SrcOver)');
+
+    // Step 4: Draw gradient rect
+    const gradientPaint = new CanvasKit.Paint();
+    const colors = [
+        CanvasKit.Color4f(0.204, 0.596, 0.859, 1), // #3498db
+        CanvasKit.Color4f(0.180, 0.800, 0.443, 1), // #2ecc71
+    ];
+    const shader = CanvasKit.Shader.MakeLinearGradient(
+        [0, 0], [textWidth, 0],
+        colors, [0, 1],
+        CanvasKit.TileMode.Clamp
+    );
+    gradientPaint.setShader(shader);
+    canvas.drawRect(clipRect, gradientPaint);
+    gradientPaint.delete();
+    log('4. canvas.drawRect(gradient)');
+
+    // Step 5: SaveLayer with DstIn (blendMode 6) - this is the key!
+    // Try using saveLayerRec which gives more control
+    const layerPaint2 = new CanvasKit.Paint();
+    layerPaint2.setBlendMode(CanvasKit.BlendMode.DstIn);
+    // Note: CanvasKit saveLayer signature might differ - try without bounds
+    canvas.saveLayer(layerPaint2, null, null, 0);
+    layerPaint2.delete();
+    log('5. canvas.saveLayer(DstIn) with explicit null bounds');
+
+    // Step 6: Draw text in black (acts as mask)
+    const font = new CanvasKit.Font(typeface, 48);
+    font.setEmbolden(true);
+    const textPaint = new CanvasKit.Paint();
+    textPaint.setColor(CanvasKit.BLACK);
+    textPaint.setAntiAlias(true);
+    canvas.drawText('Gradient Text', textX, textY, textPaint, font);
+    textPaint.delete();
+    font.delete();
+    log('6. canvas.drawText(black)');
+
+    // Steps 7-9: Restore x3
+    canvas.restore();
+    log('7. canvas.restore()');
+    canvas.restore();
+    log('8. canvas.restore()');
+    canvas.restore();
+    log('9. canvas.restore()');
+
+    surface.flush();
+    log('Done!');
+}
+
+main().catch(e => {
+    document.getElementById('log').textContent = 'Error: ' + e.message;
+    console.error(e);
+});
+</script>
+</body>
+</html>

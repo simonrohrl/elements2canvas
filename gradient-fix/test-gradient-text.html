@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Gradient Text Test Case</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      padding: 40px;
+      background: #f0f0f0;
+    }
+
+    /* Method 1: background-clip gradient text (most common) */
+    .gradient-text-clip {
+      font-size: 48px;
+      font-weight: bold;
+      background: linear-gradient(to right, #3498db, #2ecc71);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    /* Method 2: SVG-based gradient */
+    .gradient-text-svg {
+      font-size: 48px;
+      font-weight: bold;
+    }
+
+    /* Control: solid color text */
+    .solid-text {
+      font-size: 48px;
+      font-weight: bold;
+      color: #3498db;
+    }
+
+    /* Control: gradient rectangle (this works) */
+    .gradient-rect {
+      width: 400px;
+      height: 60px;
+      background: linear-gradient(to right, #3498db, #2ecc71);
+      border-radius: 8px;
+      margin: 20px 0;
+    }
+
+    .label {
+      font-size: 14px;
+      color: #666;
+      margin-top: 30px;
+      margin-bottom: 5px;
+    }
+  </style>
+</head>
+<body>
+  <div class="label">1. Gradient Text (background-clip method):</div>
+  <div class="gradient-text-clip">Gradient Text</div>
+
+  <div class="label">2. Solid Text (control - should work):</div>
+  <div class="solid-text">Solid Text</div>
+
+  <div class="label">3. Gradient Rectangle (control - should work):</div>
+  <div class="gradient-rect"></div>
+
+  <div class="label">4. SVG Gradient Text:</div>
+  <svg width="400" height="60">
+    <defs>
+      <linearGradient id="grad1" x1="0%" y1="0%" x2="100%" y2="0%">
+        <stop offset="0%" style="stop-color:#3498db;stop-opacity:1" />
+        <stop offset="100%" style="stop-color:#2ecc71;stop-opacity:1" />
+      </linearGradient>
+    </defs>
+    <text x="0" y="45" font-size="48" font-weight="bold" fill="url(#grad1)">SVG Gradient</text>
+  </svg>
+
+</body>
+</html>
