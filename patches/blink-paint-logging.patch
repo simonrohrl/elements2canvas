@@ -81,7 +81,7 @@ index 00357e6c40..88fe9317f9 100644
  
    FRIEND_TEST_ALL_PREFIXES(PaintLayerTest,
 diff --git a/third_party/blink/renderer/core/paint/paint_layer_painter.cc b/third_party/blink/renderer/core/paint/paint_layer_painter.cc
-index 317149bc68..d3fa91c590 100644
+index 317149bc68..3a055c8287 100644
 --- a/third_party/blink/renderer/core/paint/paint_layer_painter.cc
 +++ b/third_party/blink/renderer/core/paint/paint_layer_painter.cc
 @@ -4,8 +4,12 @@
@@ -128,7 +128,7 @@ index 317149bc68..d3fa91c590 100644
  #include "ui/gfx/geometry/point3_f.h"
  
  namespace blink {
-@@ -141,28 +155,537 @@ scoped_refptr<cc::ViewTransitionContentLayer> GetTransitionScopeSnapshotLayer(
+@@ -141,28 +155,543 @@ scoped_refptr<cc::ViewTransitionContentLayer> GetTransitionScopeSnapshotLayer(
    return nullptr;
  }
  
@@ -347,7 +347,7 @@ index 317149bc68..d3fa91c590 100644
 +  // === FULL BOX MODEL DATA ===
 +  if (object.IsBox()) {
 +    const auto& box = To<LayoutBox>(object);
-+    const ComputedStyle& style = object.StyleRef();
++    // const ComputedStyle& style = object.StyleRef();
 +
 +    // 1. GEOMETRY (absolute coordinates)
 +    auto geometry = std::make_unique<JSONObject>();
@@ -360,6 +360,9 @@ index 317149bc68..d3fa91c590 100644
 +    geometry->SetDouble("height", border_box.Height().ToDouble());
 +    json->SetObject("geometry", std::move(geometry));
 +
++    // TODO: Fix API calls for sections 2-8
++    // These are commented out due to API compatibility issues
++    /*
 +    // 2. BORDER RADII (8 values)
 +    if (style.HasBorderRadius()) {
 +      const auto& radii = style.BorderRadii();
@@ -452,8 +455,10 @@ index 317149bc68..d3fa91c590 100644
 +      }
 +      json->SetArray("box_shadow", std::move(shadows_array));
 +    }
++    */
 +  }
 +
++  /*
 +  // 8. PROPERTY TREE STATE IDS (for all objects, not just boxes)
 +  if (object.FirstFragment().HasLocalBorderBoxProperties()) {
 +    const auto& props = object.FirstFragment().LocalBorderBoxProperties();
@@ -463,6 +468,7 @@ index 317149bc68..d3fa91c590 100644
 +    state->SetInteger("effect_id", props.Effect().Id());
 +    json->SetObject("state_ids", std::move(state));
 +  }
++  */
 +
 +  return json;
 +}
@@ -670,7 +676,7 @@ index 317149bc68..d3fa91c590 100644
  
    return false;
  }
-@@ -200,19 +723,25 @@ static bool ShouldCreateSubsequence(const PaintLayer& paint_layer,
+@@ -200,19 +729,25 @@ static bool ShouldCreateSubsequence(const PaintLayer& paint_layer,
                                      const GraphicsContext& context,
                                      PaintFlags paint_flags) {
    // Caching is not needed during printing or painting previews.
@@ -700,7 +706,7 @@ index 317149bc68..d3fa91c590 100644
  
    // Create subsequence if the layer will create a paint chunk because of
    // different properties.
-@@ -272,8 +801,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
+@@ -272,8 +807,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
      return kFullyPainted;
    }
  
@@ -711,7 +717,7 @@ index 317149bc68..d3fa91c590 100644
  
    if (object.IsFragmentLessBox()) {
      return kFullyPainted;
-@@ -282,8 +812,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
+@@ -282,8 +818,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
    // Non self-painting layers without self-painting descendants don't need to be
    // painted as their layoutObject() should properly paint itself.
    if (!paint_layer_.IsSelfPaintingLayer() &&
@@ -722,7 +728,7 @@ index 317149bc68..d3fa91c590 100644
  
    std::optional<CheckAncestorPositionVisibilityScope>
        check_position_visibility_scope;
-@@ -304,10 +835,103 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
+@@ -304,10 +841,103 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
      return kMayBeClippedByCullRect;
    }
  
@@ -827,7 +833,7 @@ index 317149bc68..d3fa91c590 100644
  
    IgnorePaintTimingScope ignore_paint_timing;
    if (object.StyleRef().Opacity() == 0.0f) {
-@@ -344,8 +968,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
+@@ -344,8 +974,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
      gfx::Rect visual_rect = FirstFragmentVisualRect(object);
      gfx::Rect cull_rect = object.FirstFragment().GetCullRect().Rect();
      bool cull_rect_intersects_self = cull_rect.Intersects(visual_rect);
@@ -838,7 +844,7 @@ index 317149bc68..d3fa91c590 100644
  
      bool cull_rect_intersects_contents = true;
      if (const auto* box = DynamicTo<LayoutBox>(object)) {
-@@ -355,8 +980,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
+@@ -355,8 +986,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
            object.FirstFragment().GetContentsCullRect().Rect());
        cull_rect_intersects_contents =
            contents_cull_rect.Intersects(contents_visual_rect);
@@ -849,7 +855,7 @@ index 317149bc68..d3fa91c590 100644
      } else {
        cull_rect_intersects_contents = cull_rect_intersects_self;
      }
-@@ -391,8 +1017,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
+@@ -391,8 +1023,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
    PaintController& controller = context.GetPaintController();
  
    std::optional<ScopedEffectivelyInvisible> effectively_invisible;
@@ -860,7 +866,7 @@ index 317149bc68..d3fa91c590 100644
  
    std::optional<ScopedPaintChunkProperties> layer_chunk_properties;
  
-@@ -433,8 +1060,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
+@@ -433,8 +1066,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
    }
  
    if (PaintChildren(kNegativeZOrderChildren, context, paint_flags) ==
@@ -871,7 +877,7 @@ index 317149bc68..d3fa91c590 100644
  
    if (should_paint_content) {
      // If the negative-z-order children created paint chunks, this gives the
-@@ -455,18 +1083,21 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
+@@ -455,18 +1089,21 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
        is_self_painting_layer && object.StyleRef().HasOutline();
  
    bool is_video = IsA<LayoutVideo>(object);
@@ -896,7 +902,7 @@ index 317149bc68..d3fa91c590 100644
      // Otherwise the overlay overflow controls will be painted after scrolling
      // children in PaintChildren().
    }
-@@ -488,8 +1119,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
+@@ -488,8 +1125,9 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
            PaintWithPhase(PaintPhase::kMask, context, paint_flags);
          }
        }
@@ -907,7 +913,7 @@ index 317149bc68..d3fa91c590 100644
      }
      if (PaintTransitionPseudos(context, object, paint_flags) ==
          kMayBeClippedByCullRect) {
-@@ -564,8 +1196,9 @@ PaintResult PaintLayerPainter::PaintChildren(
+@@ -564,8 +1202,9 @@ PaintResult PaintLayerPainter::PaintChildren(
      GraphicsContext& context,
      PaintFlags paint_flags) {
    PaintResult result = kFullyPainted;
@@ -918,7 +924,7 @@ index 317149bc68..d3fa91c590 100644
  
    LayoutObject& layout_object = paint_layer_.GetLayoutObject();
    if (layout_object.ChildPaintBlockedByDisplayLock()) {
-@@ -579,8 +1212,9 @@ PaintResult PaintLayerPainter::PaintChildren(
+@@ -579,8 +1218,9 @@ PaintResult PaintLayerPainter::PaintChildren(
  
    PaintLayerPaintOrderIterator iterator(&paint_layer_, children_to_visit);
    while (PaintLayer* child = iterator.Next()) {
@@ -929,7 +935,7 @@ index 317149bc68..d3fa91c590 100644
  
      if (!layout_object.IsViewTransitionRoot() &&
          ViewTransitionUtils::IsViewTransitionRoot(child->GetLayoutObject())) {
-@@ -591,8 +1225,9 @@ PaintResult PaintLayerPainter::PaintChildren(
+@@ -591,8 +1231,9 @@ PaintResult PaintLayerPainter::PaintChildren(
      }
  
      if (PaintLayerPainter(*child).Paint(context, paint_flags) ==
@@ -940,7 +946,7 @@ index 317149bc68..d3fa91c590 100644
  
      if (const auto* layers_painting_overlay_overflow_controls_after =
              iterator.LayersPaintingOverlayOverflowControlsAfter(child)) {
-@@ -632,8 +1267,9 @@ void PaintLayerPainter::PaintFragmentWithPhase(
+@@ -632,8 +1273,9 @@ void PaintLayerPainter::PaintFragmentWithPhase(
           phase == PaintPhase::kOverlayOverflowControls);
  
    CullRect cull_rect = fragment_data.GetCullRect();
@@ -951,7 +957,7 @@ index 317149bc68..d3fa91c590 100644
  
    auto chunk_properties = fragment_data.LocalBorderBoxProperties();
    if (phase == PaintPhase::kMask) {
-@@ -691,14 +1327,16 @@ void PaintLayerPainter::PaintWithPhase(PaintPhase phase,
+@@ -691,14 +1333,16 @@ void PaintLayerPainter::PaintWithPhase(PaintPhase phase,
      }
  
      std::optional<ScopedDisplayItemFragment> scoped_display_item_fragment;

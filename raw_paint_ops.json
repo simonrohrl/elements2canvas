@@ -2965,11 +2965,11 @@
       },
       {
          "type": "DrawPathOp",
-         "path": "M1656 1103L1642 1117M1656 1111L1650 1117",
+         "path": "M1656 1104L1643 1117M1656 1111L1650 1117",
          "fillType": 0,
          "bounds": [
-            1642,
-            1103,
+            1643,
+            1104,
             1656,
             1117
          ],
@@ -2989,11 +2989,11 @@
       },
       {
          "type": "DrawPathOp",
-         "path": "M1656 1105L1644 1117M1656 1113L1652 1117",
+         "path": "M1656 1106L1645 1117M1656 1113L1652 1117",
          "fillType": 0,
          "bounds": [
-            1644,
-            1105,
+            1645,
+            1106,
             1656,
             1117
          ],
@@ -16351,6 +16351,7 @@
             0,
             0
          ],
+         "blendMode": 3,
          "flags": {
             "r": 0,
             "g": 0,
@@ -16457,6 +16458,7 @@
             0,
             0
          ],
+         "blendMode": 6,
          "flags": {
             "r": 0,
             "g": 0,
@@ -21674,6 +21676,7 @@
             0,
             0
          ],
+         "blendMode": 3,
          "flags": {
             "r": 0,
             "g": 0,
@@ -21749,6 +21752,7 @@
             0,
             0
          ],
+         "blendMode": 6,
          "flags": {
             "r": 0,
             "g": 0,
@@ -38709,6 +38713,165 @@
          "transform_id": 5,
          "clip_id": 1,
          "effect_id": 25
+      },
+      {
+         "type": "SaveOp",
+         "transform_id": 0,
+         "clip_id": 0,
+         "effect_id": 0
+      },
+      {
+         "type": "TranslateOp",
+         "dx": 2370,
+         "dy": 1364,
+         "transform_id": 0,
+         "clip_id": 0,
+         "effect_id": 0
+      },
+      {
+         "type": "SaveOp",
+         "transform_id": 0,
+         "clip_id": 0,
+         "effect_id": 0
+      },
+      {
+         "type": "ClipRectOp",
+         "rect": [
+            0,
+            0,
+            30,
+            30
+         ],
+         "antiAlias": false,
+         "clipOp": 1,
+         "transform_id": 0,
+         "clip_id": 0,
+         "effect_id": 0
+      },
+      {
+         "type": "DrawRectOp",
+         "rect": [
+            0,
+            0,
+            30,
+            30
+         ],
+         "flags": {
+            "r": 0,
+            "g": 0,
+            "b": 0,
+            "a": 1,
+            "style": 0,
+            "strokeWidth": 0,
+            "strokeCap": 0,
+            "strokeJoin": 0,
+            "shaderType": "kLinearGradient",
+            "startPoint": [
+               0,
+               0
+            ],
+            "endPoint": [
+               30,
+               30
+            ],
+            "gradientColors": [
+               {
+                  "r": 0.175999999046326,
+                  "g": 0.175999999046326,
+                  "b": 0.175999999046326,
+                  "a": 1
+               },
+               {
+                  "r": 0.168999999761581,
+                  "g": 0.168999999761581,
+                  "b": 0.168999999761581,
+                  "a": 1
+               }
+            ],
+            "gradientPositions": [],
+            "hasShader": true
+         },
+         "transform_id": 0,
+         "clip_id": 0,
+         "effect_id": 0
+      },
+      {
+         "type": "DrawRectOp",
+         "rect": [
+            0,
+            0,
+            2,
+            2
+         ],
+         "flags": {
+            "r": 0.239215701818466,
+            "g": 0.239215701818466,
+            "b": 0.239215701818466,
+            "a": 1,
+            "style": 0,
+            "strokeWidth": 0,
+            "strokeCap": 0,
+            "strokeJoin": 0
+         },
+         "transform_id": 0,
+         "clip_id": 0,
+         "effect_id": 0
+      },
+      {
+         "type": "DrawRectOp",
+         "rect": [
+            0,
+            28,
+            30,
+            30
+         ],
+         "flags": {
+            "r": 0.317647069692612,
+            "g": 0.317647069692612,
+            "b": 0.317647069692612,
+            "a": 1,
+            "style": 0,
+            "strokeWidth": 0,
+            "strokeCap": 0,
+            "strokeJoin": 0
+         },
+         "transform_id": 0,
+         "clip_id": 0,
+         "effect_id": 0
+      },
+      {
+         "type": "DrawRectOp",
+         "rect": [
+            28,
+            0,
+            30,
+            30
+         ],
+         "flags": {
+            "r": 0.317647069692612,
+            "g": 0.317647069692612,
+            "b": 0.317647069692612,
+            "a": 1,
+            "style": 0,
+            "strokeWidth": 0,
+            "strokeCap": 0,
+            "strokeJoin": 0
+         },
+         "transform_id": 0,
+         "clip_id": 0,
+         "effect_id": 0
+      },
+      {
+         "type": "RestoreOp",
+         "transform_id": 0,
+         "clip_id": 0,
+         "effect_id": 0
+      },
+      {
+         "type": "RestoreOp",
+         "transform_id": 0,
+         "clip_id": 0,
+         "effect_id": 0
       }
    ],
    "transform_tree": {
@@ -39607,8 +39770,8 @@
             "clip_rect": [
                0,
                0,
-               2400,
-               1394
+               2370,
+               1364
             ]
          },
          {
@@ -40130,18 +40293,6 @@
             "id": 25,
             "parent_id": 1,
             "opacity": 0.100000001490116,
-            "blend_mode": "SrcOver"
-         },
-         {
-            "id": 26,
-            "parent_id": 0,
-            "opacity": 1,
-            "blend_mode": "SrcOver"
-         },
-         {
-            "id": 27,
-            "parent_id": 0,
-            "opacity": 1,
             "blend_mode": "SrcOver"
          }
       ]
