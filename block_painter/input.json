@@ -1,0 +1,37 @@
+{
+  "geometry": {
+    "x": 40,
+    "y": 40,
+    "width": 776,
+    "height": 1672
+  },
+  "border_radii": [24, 24, 24, 24, 24, 24, 24, 24],
+  "background_color": {
+    "r": 1,
+    "g": 1,
+    "b": 1,
+    "a": 1
+  },
+  "box_shadow": [
+    {
+      "offset_x": 0,
+      "offset_y": 8,
+      "blur": 24,
+      "spread": 0,
+      "inset": false,
+      "color": {
+        "r": 0,
+        "g": 0,
+        "b": 0,
+        "a": 1
+      }
+    }
+  ],
+  "visibility": "visible",
+  "node_id": 123,
+  "state_ids": {
+    "transform_id": 5,
+    "clip_id": 1,
+    "effect_id": 1
+  }
+}
