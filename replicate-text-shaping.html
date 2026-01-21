@@ -81,8 +81,36 @@
   <h1>Text Shaping Replication</h1>
 
   <div class="controls">
-    <button id="compareBtn" disabled>Run Comparison</button>
-    <div id="status">Initializing...</div>
+    <div style="margin-bottom: 15px;">
+      <strong>1. Input Files:</strong><br>
+      <label style="display: inline-block; margin: 5px 10px 5px 0;">
+        layout_tree.json: <input type="file" id="layoutFile" accept=".json">
+      </label>
+      <label style="display: inline-block; margin: 5px 10px 5px 0;">
+        Debug log (optional): <input type="file" id="debugFile" accept=".log,.txt">
+      </label>
+    </div>
+    <div style="margin-bottom: 15px;">
+      <strong>2. Output Files (select where to save):</strong><br>
+      <button id="selectPreShapeBtn" style="margin: 5px 10px 5px 0;">Select layout_tree_pre_shape.json</button>
+      <span id="preShapeStatus" style="color: #666;">Not selected</span><br>
+      <button id="selectReconBtn" style="margin: 5px 10px 5px 0;">Select layout_tree_reconstructed.json</button>
+      <span id="reconStatus" style="color: #666;">Not selected</span><br>
+      <button id="selectDebugOutBtn" style="margin: 5px 10px 5px 0;">Select text_shaping_debug.log</button>
+      <span id="debugOutStatus" style="color: #666;">Not selected</span>
+    </div>
+    <div style="margin-bottom: 10px;">
+      <strong>3. Run:</strong>
+      <button id="compareBtn" disabled>Run Comparison</button>
+      <label style="margin-left: 20px;">
+        Tolerance (px): <input type="number" id="tolerance" value="0.5" step="0.1" min="0" style="width: 60px;">
+      </label>
+    </div>
+    <div id="status">Select layout_tree.json to begin...</div>
+    <div id="debugInfo" style="margin-top: 10px; padding: 10px; background: #fff3e0; border-radius: 4px; display: none;">
+      <strong>Debug Log:</strong>
+      <pre id="debugContent" style="font-size: 10px; max-height: 150px; overflow: auto; margin: 5px 0;"></pre>
+    </div>
   </div>
 
   <div id="results"></div>
@@ -92,8 +120,13 @@
     let layoutData = null;
     let arialTypeface = null;
     let fontMgr = null;
+    let debugLogData = null;
+    let preShapeFileHandle = null;
+    let reconFileHandle = null;
+    let debugOutFileHandle = null;
+    let debugLogLines = [];
 
-    // Initialize everything
+    // Initialize CanvasKit and font
     async function init() {
       try {
         updateStatus('Initializing CanvasKit...');
@@ -118,21 +151,146 @@
           throw new Error('Failed to create FontMgr');
         }
 
-        updateStatus('Loading layout_tree.json...');
-        const layoutResponse = await fetch('layout_tree.json');
-        if (!layoutResponse.ok) {
-          throw new Error(`Failed to load layout_tree.json: ${layoutResponse.status}`);
+        // Debug: check what fonts are available
+        const fontCount = fontMgr.countFamilies();
+        const families = [];
+        for (let i = 0; i < fontCount; i++) {
+          families.push(fontMgr.getFamilyName(i));
         }
-        layoutData = await layoutResponse.json();
+        console.log('Available fonts in FontMgr:', families);
 
-        const textNodes = layoutData.layout_tree.filter(n => n.text && n.fragments);
-        updateStatus(`Ready! Loaded ${textNodes.length} text nodes. Click "Run Comparison" to start.`);
-        document.getElementById('compareBtn').disabled = false;
+        updateStatus('CanvasKit ready. Select layout_tree.json file to continue...');
 
       } catch (e) {
         updateStatus(`Error: ${e.message}`);
         console.error(e);
       }
+    }
+
+    // Handle layout_tree.json file selection
+    function handleLayoutFile(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          layoutData = JSON.parse(e.target.result);
+          const textNodes = layoutData.layout_tree.filter(n => n.text && n.fragments);
+          updateStatus(`Loaded ${textNodes.length} text nodes from ${file.name}. Click "Run Comparison" to start.`);
+          document.getElementById('compareBtn').disabled = false;
+        } catch (err) {
+          updateStatus(`Error parsing JSON: ${err.message}`);
+        }
+      };
+      reader.readAsText(file);
+    }
+
+    // Handle debug log file selection
+    function handleDebugFile(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        debugLogData = e.target.result;
+        document.getElementById('debugInfo').style.display = 'block';
+        document.getElementById('debugContent').textContent = debugLogData.substring(0, 2000) +
+          (debugLogData.length > 2000 ? '\n... (truncated)' : '');
+        console.log('Debug log loaded:', debugLogData.length, 'bytes');
+      };
+      reader.readAsText(file);
+    }
+
+    // Select output file for pre-shape JSON
+    async function selectPreShapeFile() {
+      try {
+        preShapeFileHandle = await window.showSaveFilePicker({
+          suggestedName: 'layout_tree_pre_shape.json',
+          types: [{
+            description: 'JSON Files',
+            accept: { 'application/json': ['.json'] }
+          }]
+        });
+        document.getElementById('preShapeStatus').textContent = preShapeFileHandle.name;
+        document.getElementById('preShapeStatus').style.color = '#2e7d32';
+      } catch (err) {
+        if (err.name !== 'AbortError') {
+          console.error('Error selecting pre-shape file:', err);
+        }
+      }
+    }
+
+    // Select output file for reconstructed JSON
+    async function selectReconFile() {
+      try {
+        reconFileHandle = await window.showSaveFilePicker({
+          suggestedName: 'layout_tree_reconstructed.json',
+          types: [{
+            description: 'JSON Files',
+            accept: { 'application/json': ['.json'] }
+          }]
+        });
+        document.getElementById('reconStatus').textContent = reconFileHandle.name;
+        document.getElementById('reconStatus').style.color = '#2e7d32';
+      } catch (err) {
+        if (err.name !== 'AbortError') {
+          console.error('Error selecting reconstructed file:', err);
+        }
+      }
+    }
+
+    // Select output file for debug log
+    async function selectDebugOutFile() {
+      try {
+        debugOutFileHandle = await window.showSaveFilePicker({
+          suggestedName: 'text_shaping_debug.log',
+          types: [{
+            description: 'Log Files',
+            accept: { 'text/plain': ['.log', '.txt'] }
+          }]
+        });
+        document.getElementById('debugOutStatus').textContent = debugOutFileHandle.name;
+        document.getElementById('debugOutStatus').style.color = '#2e7d32';
+      } catch (err) {
+        if (err.name !== 'AbortError') {
+          console.error('Error selecting debug output file:', err);
+        }
+      }
+    }
+
+    // Write data to a file handle
+    async function writeToFileHandle(fileHandle, data) {
+      if (!fileHandle) return false;
+      try {
+        const writable = await fileHandle.createWritable();
+        await writable.write(JSON.stringify(data, null, 2));
+        await writable.close();
+        return true;
+      } catch (err) {
+        console.error('Error writing to file:', err);
+        return false;
+      }
+    }
+
+    // Write text to a file handle
+    async function writeTextToFileHandle(fileHandle, text) {
+      if (!fileHandle) return false;
+      try {
+        const writable = await fileHandle.createWritable();
+        await writable.write(text);
+        await writable.close();
+        return true;
+      } catch (err) {
+        console.error('Error writing to file:', err);
+        return false;
+      }
+    }
+
+    // Add a debug log line
+    function debugLog(msg) {
+      debugLogLines.push(msg);
+      console.log('[DEBUG]', msg);
     }
 
     function updateStatus(msg) {
@@ -147,15 +305,23 @@
         if (node.text && node.fragments && node.fragments.length > 0) {
           const style = node.computed_style || {};
 
+          // Chromium stores fragment start/end as positions in the COLLAPSED text
+          // So we need to collapse whitespace first, then extract the substring
+          const collapsedFullText = collapseWhitespace(node.text);
+
           for (const fragment of node.fragments) {
             if (fragment.runs && fragment.runs.length > 0) {
               for (const run of fragment.runs) {
                 if (run.glyphs && run.positions) {
+                  // Use collapsed text with fragment positions
+                  const fragmentText = collapsedFullText.substring(fragment.start, fragment.end);
+
                   textNodes.push({
                     id: node.id,
                     name: node.name,
-                    text: node.text.substring(fragment.start, fragment.end),
-                    fullText: node.text,
+                    text: fragmentText,  // Already collapsed
+                    originalText: node.text,
+                    collapsedFullText: collapsedFullText,
                     start: fragment.start,
                     end: fragment.end,
                     style: {
@@ -179,8 +345,24 @@
       return textNodes;
     }
 
+    // Collapse whitespace like CSS does (similar to Chromium's behavior)
+    // This handles: newlines -> space, multiple spaces -> single space, trim leading/trailing
+    function collapseWhitespace(text) {
+      // Replace newlines and tabs with spaces
+      let collapsed = text.replace(/[\n\r\t]/g, ' ');
+      // Collapse multiple spaces to single space
+      collapsed = collapsed.replace(/  +/g, ' ');
+      // Trim leading and trailing whitespace
+      collapsed = collapsed.trim();
+      return collapsed;
+    }
+
     // Shape text using CanvasKit Paragraph API (includes HarfBuzz shaping with kerning)
+    // NOTE: text is expected to already be collapsed (from extractTextNodes)
     function shapeText(text, style) {
+      // Text should already be collapsed from extractTextNodes, but ensure it
+      const collapsedText = text;
+
       // Build paragraph style
       const paraStyle = new CanvasKit.ParagraphStyle({
         textStyle: {
@@ -197,7 +379,7 @@
       });
 
       const builder = CanvasKit.ParagraphBuilder.Make(paraStyle, fontMgr);
-      builder.addText(text);
+      builder.addText(collapsedText);
       const paragraph = builder.build();
 
       // Layout at a very wide width to avoid line breaks
@@ -231,15 +413,15 @@
       if (glyphs.length === 0) {
         const font = new CanvasKit.Font(arialTypeface, style.fontSize);
         font.setSubpixel(true);
-        const glyphIds = font.getGlyphIDs(text);
+        const glyphIds = font.getGlyphIDs(collapsedText);
         const glyphWidths = font.getGlyphWidths(glyphIds);
 
         let currentX = 0;
-        for (let i = 0; i < text.length; i++) {
+        for (let i = 0; i < collapsedText.length; i++) {
           positions.push(currentX);
           currentX += (glyphWidths[i] || 0);
           if (style.letterSpacing) currentX += style.letterSpacing;
-          if (style.wordSpacing && (text[i] === ' ' || text[i] === '\u00A0')) {
+          if (style.wordSpacing && (collapsedText[i] === ' ' || collapsedText[i] === '\u00A0')) {
             currentX += style.wordSpacing;
           }
         }
@@ -250,7 +432,7 @@
       paragraph.delete();
       builder.delete();
 
-      return { glyphs, positions };
+      return { glyphs, positions, collapsedText };
     }
 
     // Compare positions with tolerance
@@ -285,24 +467,65 @@
 
       updateStatus('Running comparison...');
 
+      // Reset debug log
+      debugLogLines = [];
+      debugLog('=== Text Shaping Comparison Debug Log ===');
+      debugLog(`Timestamp: ${new Date().toISOString()}`);
+      debugLog(`CanvasKit version: 0.39.1`);
+      debugLog('');
+
       const textNodes = extractTextNodes(layoutData.layout_tree);
+      debugLog(`Total text nodes to process: ${textNodes.length}`);
+      debugLog('');
+
       const results = [];
 
       let matches = 0;
       let mismatches = 0;
+
+      const tolerance = parseFloat(document.getElementById('tolerance').value) || 0.5;
 
       for (const node of textNodes) {
         const canvaskitResult = shapeText(node.text, node.style);
 
         const comparison = comparePositions(
           node.chromiumPositions,
-          canvaskitResult.positions
+          canvaskitResult.positions,
+          tolerance
         );
 
         if (comparison.match) {
           matches++;
         } else {
           mismatches++;
+          // Log detailed mismatch info
+          debugLog(`--- MISMATCH #${mismatches} ---`);
+          debugLog(`Text: "${node.text.substring(0, 50)}${node.text.length > 50 ? '...' : ''}"`);
+          debugLog(`Original text: "${(node.originalText || '').substring(0, 50)}..."`);
+          debugLog(`Style: fontSize=${node.style.fontSize}, letterSpacing=${node.style.letterSpacing}, wordSpacing=${node.style.wordSpacing}`);
+          debugLog(`Text length: ${node.text.length}, Chromium glyphs: ${node.chromiumGlyphs.length}, CK glyphs: ${canvaskitResult.glyphs.length}`);
+          debugLog(`Char codes: ${node.text.substring(0, 15).split('').map(c => c.charCodeAt(0)).join(', ')}`);
+          debugLog(`Chromium glyphs: [${node.chromiumGlyphs.slice(0, 10).join(', ')}${node.chromiumGlyphs.length > 10 ? '...' : ''}]`);
+          debugLog(`CanvasKit glyphs: [${canvaskitResult.glyphs.slice(0, 10).join(', ')}${canvaskitResult.glyphs.length > 10 ? '...' : ''}]`);
+          debugLog(`Chromium positions: [${node.chromiumPositions.slice(0, 10).map(p => p.toFixed(3)).join(', ')}]`);
+          debugLog(`CanvasKit positions: [${canvaskitResult.positions.slice(0, 10).map(p => p.toFixed(3)).join(', ')}]`);
+
+          // Calculate advances
+          if (comparison.reason !== 'length mismatch') {
+            const crAdvances = [];
+            const ckAdvances = [];
+            for (let i = 1; i < Math.min(node.chromiumPositions.length, 10); i++) {
+              crAdvances.push((node.chromiumPositions[i] - node.chromiumPositions[i-1]).toFixed(3));
+              ckAdvances.push((canvaskitResult.positions[i] - canvaskitResult.positions[i-1]).toFixed(3));
+            }
+            debugLog(`Chromium advances: [${crAdvances.join(', ')}]`);
+            debugLog(`CanvasKit advances: [${ckAdvances.join(', ')}]`);
+            debugLog(`Advance diffs: [${crAdvances.map((a, i) => (parseFloat(a) - parseFloat(ckAdvances[i])).toFixed(3)).join(', ')}]`);
+            debugLog(`Max diff: ${comparison.maxDiff.toFixed(3)}, Avg diff: ${comparison.avgDiff.toFixed(3)}`);
+          } else {
+            debugLog(`Reason: ${comparison.reason} (Chromium: ${node.chromiumPositions.length}, CK: ${canvaskitResult.positions.length})`);
+          }
+          debugLog('');
         }
 
         results.push({
@@ -313,21 +536,154 @@
         });
       }
 
+      // Analyze mismatch patterns
+      const mismatchAnalysis = analyzeMismatches(results.filter(r => !r.comparison.match));
+
+      // Add summary to debug log
+      debugLog('=== SUMMARY ===');
+      debugLog(`Total: ${results.length}, Matches: ${matches}, Mismatches: ${mismatches}`);
+      debugLog(`Match rate: ${((matches / results.length) * 100).toFixed(1)}%`);
+      debugLog(`Length mismatches: ${mismatchAnalysis.lengthMismatch}`);
+      debugLog(`Glyph ID mismatches: ${mismatchAnalysis.glyphMismatch}`);
+      debugLog(`Small diffs (<1px): ${mismatchAnalysis.smallDiff}`);
+      debugLog(`Medium diffs (1-5px): ${mismatchAnalysis.mediumDiff}`);
+      debugLog(`Large diffs (>5px): ${mismatchAnalysis.largeDiff}`);
+      debugLog(`Fractional font sizes: ${mismatchAnalysis.fractionalFontSize || 0}`);
+      debugLog(`By font: ${JSON.stringify(mismatchAnalysis.byFont)}`);
+
+      // Write debug log to file
+      if (debugOutFileHandle) {
+        writeTextToFileHandle(debugOutFileHandle, debugLogLines.join('\n')).then(success => {
+          if (success) console.log('Debug log written');
+        });
+      }
+
       // Render results
-      renderResults(results, matches, mismatches);
+      renderResults(results, matches, mismatches, mismatchAnalysis);
       updateStatus(`Comparison complete: ${matches} matches, ${mismatches} mismatches`);
     }
 
-    function renderResults(results, matches, mismatches) {
+    function analyzeMismatches(mismatches) {
+      const analysis = {
+        lengthMismatch: 0,
+        glyphMismatch: 0,
+        positionDrift: 0,
+        firstPosDiff: 0,
+        smallDiff: 0,    // < 1px
+        mediumDiff: 0,   // 1-5px
+        largeDiff: 0,    // > 5px
+        byFont: {},
+        examples: []
+      };
+
+      for (const m of mismatches) {
+        // Check for glyph ID mismatches
+        const glyphsMatch = m.chromiumGlyphs.length === m.canvaskitGlyphs.length &&
+          m.chromiumGlyphs.every((g, i) => g === m.canvaskitGlyphs[i]);
+        if (!glyphsMatch) {
+          analysis.glyphMismatch++;
+        }
+
+        if (m.comparison.reason === 'length mismatch') {
+          analysis.lengthMismatch++;
+          analysis.examples.push({
+            text: m.text,
+            reason: `Length: Chromium=${m.chromiumPositions.length}, CK=${m.canvaskitPositions.length}`,
+            chromiumGlyphs: m.chromiumGlyphs.slice(0, 10),
+            canvaskitGlyphs: m.canvaskitGlyphs.slice(0, 10)
+          });
+        } else {
+          const maxDiff = m.comparison.maxDiff;
+          if (maxDiff < 1) analysis.smallDiff++;
+          else if (maxDiff < 5) analysis.mediumDiff++;
+          else analysis.largeDiff++;
+
+          // Check if first position differs (offset issue)
+          if (m.comparison.diffs[0] > 0.1) {
+            analysis.firstPosDiff++;
+          }
+
+          // Track cumulative drift
+          const lastDiff = m.comparison.diffs[m.comparison.diffs.length - 1];
+          if (lastDiff > maxDiff * 0.8) {
+            analysis.positionDrift++;
+          }
+
+          // Track by font
+          const fontKey = `${m.style.fontFamily}-${m.style.fontSize}`;
+          analysis.byFont[fontKey] = (analysis.byFont[fontKey] || 0) + 1;
+
+          // Check for fractional font sizes
+          if (m.style.fontSize % 1 !== 0) {
+            analysis.fractionalFontSize = (analysis.fractionalFontSize || 0) + 1;
+          }
+
+          if (analysis.examples.length < 10) {
+            // Calculate per-glyph advance differences
+            const chromiumAdvances = [];
+            const canvaskitAdvances = [];
+            const advanceDiffs = [];
+            for (let i = 1; i < Math.min(m.chromiumPositions.length, 8); i++) {
+              const crAdv = m.chromiumPositions[i] - m.chromiumPositions[i-1];
+              const ckAdv = m.canvaskitPositions[i] - m.canvaskitPositions[i-1];
+              chromiumAdvances.push(crAdv.toFixed(2));
+              canvaskitAdvances.push(ckAdv.toFixed(2));
+              advanceDiffs.push((crAdv - ckAdv).toFixed(3));
+            }
+            // Show character codes for debugging
+            const charCodes = m.text.substring(0, 8).split('').map(c =>
+              `'${c}'(${c.charCodeAt(0)})`
+            );
+            analysis.examples.push({
+              text: m.text.substring(0, 30),
+              chars: charCodes.join(' '),
+              reason: `maxDiff=${maxDiff.toFixed(2)}, firstDiff=${m.comparison.diffs[0]?.toFixed(2)}`,
+              fontSize: m.style.fontSize,
+              letterSpacing: m.style.letterSpacing,
+              wordSpacing: m.style.wordSpacing,
+              chromiumPos: m.chromiumPositions.slice(0, 8).map(p => p.toFixed(2)),
+              canvaskitPos: m.canvaskitPositions.slice(0, 8).map(p => p.toFixed(2)),
+              chromiumAdvances,
+              canvaskitAdvances,
+              advanceDiffs
+            });
+          }
+        }
+      }
+
+      return analysis;
+    }
+
+    function renderResults(results, matches, mismatches, mismatchAnalysis) {
       const container = document.getElementById('results');
 
       // Stats
-      const statsHtml = `
+      let statsHtml = `
         <div class="stats">
           <strong>Results:</strong> ${matches} matches, ${mismatches} mismatches
           (${((matches / results.length) * 100).toFixed(1)}% match rate)
         </div>
       `;
+
+      // Mismatch analysis
+      if (mismatchAnalysis && mismatches > 0) {
+        statsHtml += `
+          <div class="stats" style="background: #ffebee; margin-top: 10px;">
+            <strong>Mismatch Analysis:</strong><br>
+            - Length mismatches: ${mismatchAnalysis.lengthMismatch}<br>
+            - Small diffs (&lt;1px): ${mismatchAnalysis.smallDiff}<br>
+            - Medium diffs (1-5px): ${mismatchAnalysis.mediumDiff}<br>
+            - Large diffs (&gt;5px): ${mismatchAnalysis.largeDiff}<br>
+            - First position differs: ${mismatchAnalysis.firstPosDiff}<br>
+            - Cumulative drift: ${mismatchAnalysis.positionDrift}<br>
+            - Fractional font sizes: ${mismatchAnalysis.fractionalFontSize || 0}<br>
+            - Glyph ID mismatches: ${mismatchAnalysis.glyphMismatch}<br>
+            <br><strong>By Font:</strong> ${JSON.stringify(mismatchAnalysis.byFont)}<br>
+            <br><strong>Examples:</strong><br>
+            <pre style="font-size: 10px; max-height: 200px; overflow: auto;">${JSON.stringify(mismatchAnalysis.examples, null, 2)}</pre>
+          </div>
+        `
+      }
 
       // Generate pre-shaping JSON (without positions)
       const preShapingData = {
@@ -347,17 +703,33 @@
         })
       };
 
-      // Download buttons
+      // Store data and write to file handles if available
+      window._preShapingData = preShapingData;
+      window._reconstructedData = reconstructLayoutTree(results);
+
+      // Write to file handles if selected
+      let writeStatus = '';
+      if (preShapeFileHandle) {
+        writeToFileHandle(preShapeFileHandle, preShapingData).then(success => {
+          if (success) console.log('Written to pre-shape file');
+        });
+        writeStatus += `Pre-shape: ${preShapeFileHandle.name} ✓ `;
+      }
+      if (reconFileHandle) {
+        writeToFileHandle(reconFileHandle, window._reconstructedData).then(success => {
+          if (success) console.log('Written to reconstructed file');
+        });
+        writeStatus += `Reconstructed: ${reconFileHandle.name} ✓`;
+      }
+
+      // Download buttons (fallback)
       const downloadHtml = `
         <div style="margin-bottom: 20px;">
+          ${writeStatus ? `<div style="color: #2e7d32; margin-bottom: 10px;">Files written: ${writeStatus}</div>` : ''}
           <button id="downloadPreBtn">Download layout_tree_pre_shape.json</button>
           <button id="downloadReconBtn">Download layout_tree_reconstructed.json</button>
         </div>
       `;
-
-      // Store for download
-      window._preShapingData = preShapingData;
-      window._reconstructedData = reconstructLayoutTree(results);
 
       // Results table
       let resultsHtml = '<div class="comparison"><div class="panel"><h3>Chromium (Original)</h3>';
@@ -462,6 +834,11 @@
 
     // Set up event listeners and initialize
     document.getElementById('compareBtn').addEventListener('click', runComparison);
+    document.getElementById('layoutFile').addEventListener('change', handleLayoutFile);
+    document.getElementById('debugFile').addEventListener('change', handleDebugFile);
+    document.getElementById('selectPreShapeBtn').addEventListener('click', selectPreShapeFile);
+    document.getElementById('selectReconBtn').addEventListener('click', selectReconFile);
+    document.getElementById('selectDebugOutBtn').addEventListener('click', selectDebugOutFile);
     init();
   </script>
 </body>

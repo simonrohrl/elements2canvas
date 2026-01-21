@@ -685,7 +685,50 @@ class PaintOpRenderer {
             }
         }
 
-        if (op.bounds && op.bounds.length === 4) {
+        // Handle blend mode (critical for gradient text using DstIn compositing)
+        // Skia blend mode values: 0=Clear, 1=Src, 2=Dst, 3=SrcOver, 4=DstOver,
+        // 5=SrcIn, 6=DstIn, 7=SrcOut, 8=DstOut, 9=SrcATop, 10=DstATop, etc.
+        if (this.debug) {
+            this.log(`SaveLayerOp: blendMode=${op.blendMode}, bounds=${JSON.stringify(op.bounds)}`);
+        }
+        if (op.blendMode !== undefined) {
+            const blendModes = [
+                this.ck.BlendMode.Clear,      // 0
+                this.ck.BlendMode.Src,        // 1
+                this.ck.BlendMode.Dst,        // 2
+                this.ck.BlendMode.SrcOver,    // 3
+                this.ck.BlendMode.DstOver,    // 4
+                this.ck.BlendMode.SrcIn,      // 5
+                this.ck.BlendMode.DstIn,      // 6
+                this.ck.BlendMode.SrcOut,     // 7
+                this.ck.BlendMode.DstOut,     // 8
+                this.ck.BlendMode.SrcATop,    // 9
+                this.ck.BlendMode.DstATop,    // 10
+                this.ck.BlendMode.Xor,        // 11
+                this.ck.BlendMode.Plus,       // 12
+                this.ck.BlendMode.Modulate,   // 13
+                this.ck.BlendMode.Screen,     // 14
+                this.ck.BlendMode.Overlay,    // 15
+                this.ck.BlendMode.Darken,     // 16
+                this.ck.BlendMode.Lighten,    // 17
+                this.ck.BlendMode.ColorDodge, // 18
+                this.ck.BlendMode.ColorBurn,  // 19
+                this.ck.BlendMode.HardLight,  // 20
+                this.ck.BlendMode.SoftLight,  // 21
+                this.ck.BlendMode.Difference, // 22
+                this.ck.BlendMode.Exclusion,  // 23
+                this.ck.BlendMode.Multiply,   // 24
+                this.ck.BlendMode.Hue,        // 25
+                this.ck.BlendMode.Saturation, // 26
+                this.ck.BlendMode.Color,      // 27
+                this.ck.BlendMode.Luminosity, // 28
+            ];
+            if (blendModes[op.blendMode]) {
+                paint.setBlendMode(blendModes[op.blendMode]);
+            }
+        }
+
+        if (op.bounds && op.bounds.length === 4 && op.bounds[0] !== null) {
             const bounds = this.ck.LTRBRect(op.bounds[0], op.bounds[1], op.bounds[2], op.bounds[3]);
             canvas.saveLayer(paint, bounds);
         } else {
@@ -921,7 +964,56 @@ class PaintOpRenderer {
 
         if (op.flags) {
             const c = op.flags;
-            paint.setColor(this.ck.Color4f(c.r || 0, c.g || 0, c.b || 0, c.a || 1));
+
+            // Handle gradient shaders (linear and radial) for gradient text
+            if (c.shaderType && c.gradientColors) {
+                const colors = c.gradientColors.map(gc =>
+                    this.ck.Color4f(gc.r || 0, gc.g || 0, gc.b || 0, gc.a || 1)
+                );
+                const positions = c.gradientPositions || null;
+
+                if (c.shaderType === 'kLinearGradient' || c.shaderType === 'LinearGradient') {
+                    let startPt = c.startPoint || [0, 0];
+                    let endPt = c.endPoint || [100, 0];
+
+                    // Fix for SVG gradients: if endpoints are percentage-based (0-1 range),
+                    // scale them to the text bounds
+                    const gradientWidth = Math.abs(endPt[0] - startPt[0]);
+                    const gradientHeight = Math.abs(endPt[1] - startPt[1]);
+                    if (gradientWidth <= 1 && gradientHeight <= 1 && op.bounds) {
+                        // Endpoints appear to be in 0-1 percentage range
+                        // Scale to actual text bounds
+                        const textWidth = op.bounds[2] - op.bounds[0];
+                        const textHeight = op.bounds[3] - op.bounds[1];
+                        startPt = [
+                            op.bounds[0] + startPt[0] * textWidth,
+                            op.bounds[1] + startPt[1] * textHeight
+                        ];
+                        endPt = [
+                            op.bounds[0] + endPt[0] * textWidth,
+                            op.bounds[1] + endPt[1] * textHeight
+                        ];
+                        if (this.debug) {
+                            this.log(`Scaled gradient endpoints: [${startPt}] -> [${endPt}]`);
+                        }
+                    }
+
+                    const shader = this.ck.Shader.MakeLinearGradient(
+                        startPt, endPt, colors, positions, this.ck.TileMode.Clamp
+                    );
+                    paint.setShader(shader);
+                } else if (c.shaderType === 'kRadialGradient' || c.shaderType === 'RadialGradient') {
+                    const center = c.center || [50, 50];
+                    const radius = c.radius || 50;
+                    const shader = this.ck.Shader.MakeRadialGradient(
+                        center, radius, colors, positions, this.ck.TileMode.Clamp
+                    );
+                    paint.setShader(shader);
+                }
+            } else {
+                // Solid color fallback
+                paint.setColor(this.ck.Color4f(c.r || 0, c.g || 0, c.b || 0, c.a || 1));
+            }
 
             // Handle stroke vs fill style
             if (c.style === 1) {
