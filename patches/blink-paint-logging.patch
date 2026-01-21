@@ -953,10 +953,10 @@ new file mode 100644
 index 0000000000..e69de29bb2
 diff --git a/third_party/blink/renderer/platform/graphics/paint/paint_artifact_serializer.cc b/third_party/blink/renderer/platform/graphics/paint/paint_artifact_serializer.cc
 new file mode 100644
-index 0000000000..d284e80031
+index 0000000000..b78ad0b87c
 --- /dev/null
 +++ b/third_party/blink/renderer/platform/graphics/paint/paint_artifact_serializer.cc
-@@ -0,0 +1,629 @@
+@@ -0,0 +1,636 @@
 +// Copyright 2024 The Chromium Authors
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -994,6 +994,9 @@ index 0000000000..d284e80031
 +namespace blink {
 +
 +namespace {
++
++// Forward declarations for mutual recursion
++std::unique_ptr<JSONArray> SerializePaintRecord(const cc::PaintRecord& record);
 +
 +// Helper to serialize color from SkColor4f
 +std::unique_ptr<JSONObject> SerializeColor(const SkColor4f& color) {
@@ -1036,6 +1039,10 @@ index 0000000000..d284e80031
 +  json->SetDouble("a", color.fA);
 +  json->SetInteger("style", static_cast<int>(flags.getStyle()));
 +  json->SetDouble("strokeWidth", flags.getStrokeWidth());
++  // Stroke cap: 0 = Butt, 1 = Round, 2 = Square
++  json->SetInteger("strokeCap", static_cast<int>(flags.getStrokeCap()));
++  // Stroke join: 0 = Miter, 1 = Round, 2 = Bevel
++  json->SetInteger("strokeJoin", static_cast<int>(flags.getStrokeJoin()));
 +
 +  // Handle shaders (gradients)
 +  if (flags.HasShader()) {

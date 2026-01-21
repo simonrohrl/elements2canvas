@@ -143,26 +143,6 @@ class PaintOpRenderer {
         const isBlackFill = opColor && opColor.r === 0 && opColor.g === 0 && opColor.b === 0;
         const isShadowOnlyDraw = !hasUnmodifiedLayer && isBlackFill;
 
-        // Always log shadow info to console for debugging
-        console.log(`[SHADOW] applyShadows called:`, {
-            opType: op.type,
-            rect: op.rect,
-            hasUnmodifiedLayer,
-            isBlackFill,
-            isShadowOnlyDraw,
-            opColor: { r: opColor?.r, g: opColor?.g, b: opColor?.b, a: opColor?.a },
-            shadows: shadows.map((s, i) => ({
-                index: i,
-                flags: s.flags,
-                flagsBinary: (s.flags || 0).toString(2).padStart(8, '0'),
-                hasOverrideAlpha: !!(s.flags & 2),
-                hasDontModifyPaint: !!(s.flags & 4),
-                color: { r: s.r, g: s.g, b: s.b, a: s.a },
-                blur: s.blurSigma,
-                offset: { x: s.offsetX, y: s.offsetY }
-            }))
-        });
-
         if (this.debug) {
             this.log(`applyShadows: hasUnmodifiedLayer=${hasUnmodifiedLayer}, isBlackFill=${isBlackFill}, isShadowOnlyDraw=${isShadowOnlyDraw}`);
             this.log(`  op.flags: r=${opColor?.r}, g=${opColor?.g}, b=${opColor?.b}, a=${opColor?.a}`);
@@ -220,12 +200,6 @@ class PaintOpRenderer {
             }
 
             // Draw the shadow shape
-            console.log(`[SHADOW] Drawing shadow layer ${i}:`, {
-                color: { r: shadow.r, g: shadow.g, b: shadow.b, a: shadow.a },
-                blur: shadow.blurSigma,
-                offset: { x: shadow.offsetX, y: shadow.offsetY },
-                flags: shadow.flags
-            });
             drawFn(canvas, shadowPaint);
 
             shadowPaint.delete();
@@ -299,10 +273,11 @@ class PaintOpRenderer {
                     const path = this.ck.Path.MakeFromSVGString(op.path);
                     if (path) {
                         // clipOp: 0 = Difference (clip OUT), 1 = Intersect (clip IN)
+                        // Default to Intersect if clipOp is not specified (undefined)
                         const clipOp = op.clipOp === 0 ? this.ck.ClipOp.Difference : this.ck.ClipOp.Intersect;
                         canvas.clipPath(path, clipOp, op.antiAlias !== false);
-                        if (this.debug && op.clipOp === 0) {
-                            this.log(`ClipPath DIFFERENCE (clip out)`);
+                        if (this.debug) {
+                            this.log(`ClipPath ${op.clipOp === 0 ? 'DIFFERENCE' : 'INTERSECT'}`);
                         }
                         path.delete();
                     }
@@ -454,8 +429,8 @@ class PaintOpRenderer {
             paint.setStrokeWidth(op.flags.strokeWidth || 1);
 
             // Apply dash pattern if present (for dotted/dashed outlines)
-            if (op.flags.dashPattern && op.flags.dashPattern.intervals) {
-                const intervals = op.flags.dashPattern.intervals;
+            if (op.flags.dashPattern && op.flags.dashPattern.intervals && op.flags.dashPattern.intervals.length > 0) {
+                const intervals = new Float32Array(op.flags.dashPattern.intervals);
                 const phase = op.flags.dashPattern.phase || 0;
                 const pathEffect = this.ck.PathEffect.MakeDash(intervals, phase);
                 if (pathEffect) {
@@ -538,8 +513,8 @@ class PaintOpRenderer {
                 paint.setStrokeWidth(c.strokeWidth || 1);
 
                 // Apply dash pattern if present (for dotted/dashed outlines)
-                if (c.dashPattern && c.dashPattern.intervals) {
-                    const intervals = c.dashPattern.intervals;
+                if (c.dashPattern && c.dashPattern.intervals && c.dashPattern.intervals.length > 0) {
+                    const intervals = new Float32Array(c.dashPattern.intervals);
                     const phase = c.dashPattern.phase || 0;
                     const pathEffect = this.ck.PathEffect.MakeDash(intervals, phase);
                     if (pathEffect) {
@@ -608,8 +583,8 @@ class PaintOpRenderer {
                 paint.setStrokeWidth(c.strokeWidth || 1);
 
                 // Apply dash pattern if present (for dotted/dashed outlines)
-                if (c.dashPattern && c.dashPattern.intervals) {
-                    const intervals = c.dashPattern.intervals;
+                if (c.dashPattern && c.dashPattern.intervals && c.dashPattern.intervals.length > 0) {
+                    const intervals = new Float32Array(c.dashPattern.intervals);
                     const phase = c.dashPattern.phase || 0;
                     const pathEffect = this.ck.PathEffect.MakeDash(intervals, phase);
                     if (pathEffect) {
@@ -635,10 +610,16 @@ class PaintOpRenderer {
     }
 
     drawPath(canvas, op) {
-        if (!op.path) return;
+        if (!op.path) {
+            console.log('DrawPathOp: no path data');
+            return;
+        }
 
         const path = this.ck.Path.MakeFromSVGString(op.path);
-        if (!path) return;
+        if (!path) {
+            console.log('DrawPathOp: failed to parse path:', op.path);
+            return;
+        }
 
         if (op.fillType !== undefined) {
             const fillTypes = [
@@ -678,8 +659,8 @@ class PaintOpRenderer {
                 paint.setStyle(this.ck.PaintStyle.Stroke);
 
                 // Apply dash pattern if present (for dotted/dashed outlines)
-                if (op.flags.dashPattern && op.flags.dashPattern.intervals) {
-                    const intervals = op.flags.dashPattern.intervals;
+                if (op.flags.dashPattern && op.flags.dashPattern.intervals && op.flags.dashPattern.intervals.length > 0) {
+                    const intervals = new Float32Array(op.flags.dashPattern.intervals);
                     const phase = op.flags.dashPattern.phase || 0;
                     const pathEffect = this.ck.PathEffect.MakeDash(intervals, phase);
                     if (pathEffect) {
@@ -744,8 +725,18 @@ class PaintOpRenderer {
             }
 
             // Apply dash pattern if present (for dotted/dashed lines)
-            if (c.dashPattern && c.dashPattern.intervals) {
-                const intervals = c.dashPattern.intervals;
+            if (c.dashPattern && c.dashPattern.intervals && c.dashPattern.intervals.length > 0) {
+                // For dotted lines, Chromium uses [0, gap] intervals with round caps
+                // The round cap creates the dot. We need a tiny "on" value for CanvasKit.
+                const rawIntervals = c.dashPattern.intervals;
+                const adjustedIntervals = rawIntervals.map((v, i) => {
+                    // If "on" interval is 0, use a tiny value so round cap creates a dot
+                    if (i % 2 === 0 && v === 0) {
+                        return 0.01; // Tiny value, round cap will make it a circle
+                    }
+                    return v;
+                });
+                const intervals = new Float32Array(adjustedIntervals);
                 const phase = c.dashPattern.phase || 0;
                 const pathEffect = this.ck.PathEffect.MakeDash(intervals, phase);
                 if (pathEffect) {
@@ -774,6 +765,19 @@ class PaintOpRenderer {
         const tileRect = op.flags.tileRect;
         const tileRecord = op.flags.tileRecord;
 
+        // destRect is a Float32Array[4] from CanvasKit.LTRBRect: [left, top, right, bottom]
+        const destLeft = destRect[0];
+        const destTop = destRect[1];
+        const destRight = destRect[2];
+        const destBottom = destRect[3];
+
+        console.log('drawTiledPattern called:', {
+            tileRect,
+            tileRecordLength: tileRecord?.length,
+            destRect: [destLeft, destTop, destRight, destBottom],
+            tileRecordOps: tileRecord?.map(o => o.type)
+        });
+
         if (!tileRect || !tileRecord || tileRecord.length === 0) {
             if (this.debug) this.log('drawTiledPattern: missing tile data');
             return;
@@ -781,8 +785,8 @@ class PaintOpRenderer {
 
         const tileWidth = tileRect[2] - tileRect[0];
         const tileHeight = tileRect[3] - tileRect[1];
-        const destWidth = destRect.fRight - destRect.fLeft;
-        const destHeight = destRect.fBottom - destRect.fTop;
+        const destWidth = destRight - destLeft;
+        const destHeight = destBottom - destTop;
 
         if (tileWidth <= 0 || tileHeight <= 0) {
             if (this.debug) this.log('drawTiledPattern: invalid tile dimensions');
@@ -793,13 +797,23 @@ class PaintOpRenderer {
         // Clip to destination rectangle
         canvas.clipRect(destRect, this.ck.ClipOp.Intersect, true);
         // Translate to destination origin
-        canvas.translate(destRect.fLeft, destRect.fTop);
+        canvas.translate(destLeft, destTop);
+
+        // Debug: draw a visible border to verify we're here
+        const debugPaint = new this.ck.Paint();
+        debugPaint.setColor(this.ck.Color4f(1, 0, 1, 1)); // Magenta
+        debugPaint.setStyle(this.ck.PaintStyle.Stroke);
+        debugPaint.setStrokeWidth(2);
+        canvas.drawRect(this.ck.LTRBRect(0, 0, destWidth, destHeight), debugPaint);
+        debugPaint.delete();
+        console.log('Drew debug border at dest rect');
 
         // Calculate how many tiles we need
         const tilesX = Math.ceil(destWidth / tileWidth) + 1;
         const tilesY = Math.ceil(destHeight / tileHeight) + 1;
 
         // Draw the tile pattern repeatedly
+        console.log(`Drawing ${tilesX}x${tilesY} tiles, tileSize: ${tileWidth}x${tileHeight}, dest: ${destWidth}x${destHeight}`);
         for (let ty = 0; ty < tilesY; ty++) {
             for (let tx = 0; tx < tilesX; tx++) {
                 canvas.save();
@@ -807,6 +821,9 @@ class PaintOpRenderer {
 
                 // Render each op in the tile record
                 for (const tileOp of tileRecord) {
+                    if (tx === 0 && ty === 0) {
+                        console.log('Rendering tileOp:', tileOp.type, tileOp);
+                    }
                     this.renderOp(canvas, tileOp);
                 }
 
@@ -940,19 +957,26 @@ class RawPaintOpsCompositor {
 
         // Track current property tree state for efficient state changes
         let currentTransformId = null;
+        let currentTransformMatrix = null;
         let currentEffectId = null;
         let effectLayerStack = [];
 
         for (const op of paintOps) {
             // Check if we need to change transform
-            if (op.transform_id !== currentTransformId) {
-                // Reset to identity and apply new transform
-                canvas.restore();
-                canvas.save();
-
-                const matrix = trees.getTransformMatrix(op.transform_id);
-                canvas.concat(matrix);
+            // Use inverse matrix approach to preserve clip state (no save/restore)
+            if (op.transform_id !== currentTransformId && op.transform_id !== undefined) {
+                // First, undo the current transform by applying its inverse
+                if (currentTransformMatrix) {
+                    const inverse = this.ck.M44.invert(currentTransformMatrix);
+                    if (inverse) {
+                        canvas.concat(inverse);
+                    }
+                }
+                // Then apply the new transform
+                const newMatrix = trees.getTransformMatrix(op.transform_id);
+                canvas.concat(newMatrix);
                 currentTransformId = op.transform_id;
+                currentTransformMatrix = newMatrix;
             }
 
             // Check if we need to change effect (opacity/blend mode)
@@ -1052,15 +1076,39 @@ async function main() {
         const canvasEl = document.getElementById('skcanvas');
 
         // Calculate canvas size from paint ops bounds
+        // Track cumulative translation from TranslateOp to calculate absolute positions
         let maxW = 320, maxH = 148;
+        let translateX = 0, translateY = 0;
+        let saveStack = [];
+
         for (const op of paintOps) {
+            if (op.type === 'SaveOp') {
+                saveStack.push({ x: translateX, y: translateY });
+            } else if (op.type === 'RestoreOp' && saveStack.length > 0) {
+                const saved = saveStack.pop();
+                translateX = saved.x;
+                translateY = saved.y;
+            } else if (op.type === 'TranslateOp') {
+                translateX += op.dx || 0;
+                translateY += op.dy || 0;
+            }
+
             if (op.rect && op.rect.length === 4) {
-                maxW = Math.max(maxW, op.rect[2]);
-                maxH = Math.max(maxH, op.rect[3]);
+                maxW = Math.max(maxW, translateX + op.rect[2]);
+                maxH = Math.max(maxH, translateY + op.rect[3]);
             }
             if (op.bounds && op.bounds.length === 4) {
                 maxW = Math.max(maxW, op.bounds[2]);
                 maxH = Math.max(maxH, op.bounds[3]);
+            }
+            // DrawTextBlobOp has x, y position plus local bounds
+            if (op.type === 'DrawTextBlobOp' && op.y !== undefined) {
+                const localBottom = op.bounds ? op.bounds[3] : 20;
+                maxH = Math.max(maxH, op.y + localBottom);
+                if (op.x !== undefined) {
+                    const localRight = op.bounds ? op.bounds[2] : 100;
+                    maxW = Math.max(maxW, op.x + localRight);
+                }
             }
             // DrawDRRectOp uses outer_rect
             if (op.outer_rect && op.outer_rect.length === 4) {
