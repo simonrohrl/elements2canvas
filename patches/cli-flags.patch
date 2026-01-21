@@ -1,5 +1,5 @@
 diff --git a/chrome/app/chrome_main_delegate.cc b/chrome/app/chrome_main_delegate.cc
-index 1cbcce0303..c0b1154ab8 100644
+index 1cbcce0303..641b7260be 100644
 --- a/chrome/app/chrome_main_delegate.cc
 +++ b/chrome/app/chrome_main_delegate.cc
 @@ -10,6 +10,7 @@
@@ -25,7 +25,7 @@ index 1cbcce0303..c0b1154ab8 100644
  #include "content/public/app/initialize_mojo_core.h"
  #include "content/public/common/content_client.h"
  #include "content/public/common/content_constants.h"
-@@ -1063,6 +1066,36 @@ std::optional<int> ChromeMainDelegate::BasicStartupComplete() {
+@@ -1063,6 +1066,32 @@ std::optional<int> ChromeMainDelegate::BasicStartupComplete() {
    ash::BootTimesRecorder::Get()->SaveChromeMainStats();
  #endif
  
@@ -40,10 +40,6 @@ index 1cbcce0303..c0b1154ab8 100644
 +
 +  if (!cmd->HasSwitch(switches::kV))
 +    cmd->AppendSwitchASCII(switches::kV, "0");
-+
-+  // Enable verbose logging for layer tree and property trees on every commit
-+  if (!cmd->HasSwitch(switches::kVModule))
-+    cmd->AppendSwitchASCII(switches::kVModule, "layer_tree_host_impl=3");
 +
 +#if BUILDFLAG(IS_MAC)
 +  if (!cmd->HasSwitch(os_crypt::switches::kUseMockKeychain))
