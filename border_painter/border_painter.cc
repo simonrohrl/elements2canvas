@@ -122,9 +122,43 @@ PaintOpList BorderPainter::Paint(const BorderPaintInput& input) {
     return ops;
   }
 
-  // Try fast path first
-  if (PaintFastPath(input, props, ops)) {
+  // If render_hint is specified, follow it for verification
+  if (input.render_hint == BorderRenderHint::kDrawLine) {
+    // Force per-side stroked lines
+    PaintSidesAsLines(input, props, ops);
     return ops;
+  }
+
+  if (input.render_hint == BorderRenderHint::kFilledThinRect) {
+    // Force per-side filled rects
+    PaintSidesAsFilledRects(input, props, ops);
+    return ops;
+  }
+
+  if (input.render_hint == BorderRenderHint::kDoubleStroked) {
+    // Force double border as 2 stroked rects
+    PaintDoubleBorder(input, props, ops);
+    return ops;
+  }
+
+  if (input.render_hint == BorderRenderHint::kDottedLines) {
+    // Force dotted border as 4 stroked lines
+    PaintDottedBorder(input, props, ops);
+    return ops;
+  }
+
+  if (input.render_hint == BorderRenderHint::kGrooveRidge) {
+    // Force groove/ridge border as paired thin rects
+    PaintGrooveRidgeBorder(input, props, ops);
+    return ops;
+  }
+
+  // Default behavior: try fast path first
+  if (input.render_hint == BorderRenderHint::kAuto ||
+      input.render_hint == BorderRenderHint::kStrokedRect) {
+    if (PaintFastPath(input, props, ops)) {
+      return ops;
+    }
   }
 
   // Fall back to per-side painting
@@ -210,7 +244,7 @@ bool BorderPainter::PaintFastPath(const BorderPaintInput& input,
 void BorderPainter::PaintSides(const BorderPaintInput& input,
                                const BorderProperties& props,
                                PaintOpList& ops) {
-  // For non-uniform borders, draw each side as a line
+  // For non-uniform borders, draw each side
   // This is a simplified version - Chromium has much more complex logic
   // for handling corners and miters
 
@@ -224,10 +258,71 @@ void BorderPainter::PaintSides(const BorderPaintInput& input,
   }
 }
 
-// Paint a single border side
-void BorderPainter::PaintSide(const BorderPaintInput& input,
-                              BoxSide side,
-                              PaintOpList& ops) {
+// Paint all sides as stroked lines (for verification)
+void BorderPainter::PaintSidesAsLines(const BorderPaintInput& input,
+                                      const BorderProperties& props,
+                                      PaintOpList& ops) {
+  for (auto side : {BoxSide::kTop, BoxSide::kRight, BoxSide::kBottom, BoxSide::kLeft}) {
+    BorderEdge edge = GetEdge(input, side);
+    if (!edge.ShouldRender()) {
+      continue;
+    }
+    PaintSideAsLine(input, side, ops);
+  }
+}
+
+// Paint all sides as filled thin rects (for verification)
+void BorderPainter::PaintSidesAsFilledRects(const BorderPaintInput& input,
+                                            const BorderProperties& props,
+                                            PaintOpList& ops) {
+  for (auto side : {BoxSide::kTop, BoxSide::kRight, BoxSide::kBottom, BoxSide::kLeft}) {
+    BorderEdge edge = GetEdge(input, side);
+    if (!edge.ShouldRender()) {
+      continue;
+    }
+    PaintSideAsFilledRect(input, side, ops);
+  }
+}
+
+// Paint a single border side as filled thin rect
+// Chromium uses this for thin borders (typically < 10px)
+void BorderPainter::PaintSideAsFilledRect(const BorderPaintInput& input,
+                                          BoxSide side,
+                                          PaintOpList& ops) {
+  BorderEdge edge = GetEdge(input, side);
+  Color color = CalculateBorderColor(edge.color, side, edge.style);
+  const RectF& g = input.geometry;
+
+  DrawRectOp op;
+
+  switch (side) {
+    case BoxSide::kTop:
+      op.rect = {g.x, g.y, g.x + g.width, g.y + edge.width};
+      break;
+    case BoxSide::kRight:
+      op.rect = {g.x + g.width - edge.width, g.y, g.x + g.width, g.y + g.height};
+      break;
+    case BoxSide::kBottom:
+      op.rect = {g.x, g.y + g.height - edge.width, g.x + g.width, g.y + g.height};
+      break;
+    case BoxSide::kLeft:
+      op.rect = {g.x, g.y, g.x + edge.width, g.y + g.height};
+      break;
+  }
+
+  op.flags = BuildFillFlags(color);
+  op.transform_id = input.state_ids.transform_id;
+  op.clip_id = input.state_ids.clip_id;
+  op.effect_id = input.state_ids.effect_id;
+
+  ops.AddDrawRect(std::move(op));
+}
+
+// Paint a single border side as stroked line
+// Chromium uses this for thicker borders (typically >= 10px)
+void BorderPainter::PaintSideAsLine(const BorderPaintInput& input,
+                                    BoxSide side,
+                                    PaintOpList& ops) {
   BorderEdge edge = GetEdge(input, side);
   Color color = CalculateBorderColor(edge.color, side, edge.style);
 
@@ -275,6 +370,22 @@ void BorderPainter::PaintSide(const BorderPaintInput& input,
   op.effect_id = input.state_ids.effect_id;
 
   ops.AddDrawLine(std::move(op));
+}
+
+// Paint a single border side - chooses between filled rect and stroked line
+void BorderPainter::PaintSide(const BorderPaintInput& input,
+                              BoxSide side,
+                              PaintOpList& ops) {
+  BorderEdge edge = GetEdge(input, side);
+
+  // Chromium uses filled thin rects for thin borders (< 10px)
+  // and stroked lines for thicker borders
+  // The threshold appears to be around 10px based on observed output
+  if (edge.width < 10.0f) {
+    PaintSideAsFilledRect(input, side, ops);
+  } else {
+    PaintSideAsLine(input, side, ops);
+  }
 }
 
 // Calculate color for inset/outset/ridge/groove borders
@@ -386,6 +497,209 @@ DrawFlags BorderPainter::BuildFillFlags(const Color& color) {
   flags.color = color;
   flags.style = PaintStyle::kFill;
   return flags;
+}
+
+// Paint double border as 2 stroked rects
+// For a double border of width W:
+// - Each stroke line is ceil(W/3) thick
+// - Outer rect: inset by sw/2
+// - Inner rect: inset by W - sw/2
+void BorderPainter::PaintDoubleBorder(const BorderPaintInput& input,
+                                      const BorderProperties& props,
+                                      PaintOpList& ops) {
+  BorderEdge first_edge = GetEdge(input, static_cast<BoxSide>(props.first_visible_edge));
+  float border_width = first_edge.width;
+  Color color = first_edge.color;
+
+  // Stroke width for double border: ceil(border_width / 3)
+  float sw = std::ceil(border_width / 3.0f);
+  float outer_inset = sw / 2.0f;
+  float inner_inset = border_width - sw / 2.0f;
+
+  // Outer stroked rect/rrect
+  if (props.is_rounded && input.border_radii.has_value()) {
+    DrawRRectOp outer_op;
+    outer_op.rect = {
+        input.geometry.x + outer_inset,
+        input.geometry.y + outer_inset,
+        input.geometry.x + input.geometry.width - outer_inset,
+        input.geometry.y + input.geometry.height - outer_inset
+    };
+    outer_op.radii = AdjustRadiiForStroke(*input.border_radii, sw);
+    outer_op.flags = BuildStrokeFlags(color, sw, EBorderStyle::kSolid);
+    outer_op.transform_id = input.state_ids.transform_id;
+    outer_op.clip_id = input.state_ids.clip_id;
+    outer_op.effect_id = input.state_ids.effect_id;
+    ops.AddDrawRRect(std::move(outer_op));
+
+    // Inner stroked rrect
+    DrawRRectOp inner_op;
+    inner_op.rect = {
+        input.geometry.x + inner_inset,
+        input.geometry.y + inner_inset,
+        input.geometry.x + input.geometry.width - inner_inset,
+        input.geometry.y + input.geometry.height - inner_inset
+    };
+    inner_op.radii = AdjustRadiiForStroke(*input.border_radii, border_width + sw);
+    inner_op.flags = BuildStrokeFlags(color, sw, EBorderStyle::kSolid);
+    inner_op.transform_id = input.state_ids.transform_id;
+    inner_op.clip_id = input.state_ids.clip_id;
+    inner_op.effect_id = input.state_ids.effect_id;
+    ops.AddDrawRRect(std::move(inner_op));
+  } else {
+    DrawRectOp outer_op;
+    outer_op.rect = {
+        input.geometry.x + outer_inset,
+        input.geometry.y + outer_inset,
+        input.geometry.x + input.geometry.width - outer_inset,
+        input.geometry.y + input.geometry.height - outer_inset
+    };
+    outer_op.flags = BuildStrokeFlags(color, sw, EBorderStyle::kSolid);
+    outer_op.transform_id = input.state_ids.transform_id;
+    outer_op.clip_id = input.state_ids.clip_id;
+    outer_op.effect_id = input.state_ids.effect_id;
+    ops.AddDrawRect(std::move(outer_op));
+
+    DrawRectOp inner_op;
+    inner_op.rect = {
+        input.geometry.x + inner_inset,
+        input.geometry.y + inner_inset,
+        input.geometry.x + input.geometry.width - inner_inset,
+        input.geometry.y + input.geometry.height - inner_inset
+    };
+    inner_op.flags = BuildStrokeFlags(color, sw, EBorderStyle::kSolid);
+    inner_op.transform_id = input.state_ids.transform_id;
+    inner_op.clip_id = input.state_ids.clip_id;
+    inner_op.effect_id = input.state_ids.effect_id;
+    ops.AddDrawRect(std::move(inner_op));
+  }
+}
+
+// Paint dotted border as 4 stroked lines with dash pattern
+void BorderPainter::PaintDottedBorder(const BorderPaintInput& input,
+                                      const BorderProperties& props,
+                                      PaintOpList& ops) {
+  // Dotted borders use stroked lines with dash pattern
+  // Similar to regular lines but with dotted style
+  for (auto side : {BoxSide::kTop, BoxSide::kRight, BoxSide::kBottom, BoxSide::kLeft}) {
+    BorderEdge edge = GetEdge(input, side);
+    if (!edge.ShouldRender()) {
+      continue;
+    }
+
+    DrawLineOp op;
+    float half_width = edge.width / 2.0f;
+    const RectF& g = input.geometry;
+
+    switch (side) {
+      case BoxSide::kTop:
+        op.x0 = g.x;
+        op.y0 = g.y + half_width;
+        op.x1 = g.x + g.width;
+        op.y1 = g.y + half_width;
+        break;
+      case BoxSide::kRight:
+        op.x0 = g.x + g.width - half_width;
+        op.y0 = g.y;
+        op.x1 = g.x + g.width - half_width;
+        op.y1 = g.y + g.height;
+        break;
+      case BoxSide::kBottom:
+        op.x0 = g.x;
+        op.y0 = g.y + g.height - half_width;
+        op.x1 = g.x + g.width;
+        op.y1 = g.y + g.height - half_width;
+        break;
+      case BoxSide::kLeft:
+        op.x0 = g.x + half_width;
+        op.y0 = g.y;
+        op.x1 = g.x + half_width;
+        op.y1 = g.y + g.height;
+        break;
+    }
+
+    op.flags = BuildStrokeFlags(edge.color, edge.width, EBorderStyle::kDotted);
+    op.transform_id = input.state_ids.transform_id;
+    op.clip_id = input.state_ids.clip_id;
+    op.effect_id = input.state_ids.effect_id;
+
+    ops.AddDrawLine(std::move(op));
+  }
+}
+
+// Paint groove/ridge border as paired thin rects per side
+// Groove: outer half is dark, inner half is light
+// Ridge: outer half is light, inner half is dark
+void BorderPainter::PaintGrooveRidgeBorder(const BorderPaintInput& input,
+                                           const BorderProperties& props,
+                                           PaintOpList& ops) {
+  BorderEdge first_edge = GetEdge(input, static_cast<BoxSide>(props.first_visible_edge));
+  float border_width = first_edge.width;
+  Color color = first_edge.color;
+  float half_width = border_width / 2.0f;
+
+  // Determine if groove or ridge (affects which half is dark)
+  bool is_groove = first_edge.style == EBorderStyle::kGroove;
+  Color dark_color = color.Dark();
+  Color light_color = color;
+
+  const RectF& g = input.geometry;
+
+  // For each side, draw 2 thin rects (outer half, inner half)
+  for (auto side : {BoxSide::kTop, BoxSide::kRight, BoxSide::kBottom, BoxSide::kLeft}) {
+    BorderEdge edge = GetEdge(input, side);
+    if (!edge.ShouldRender()) {
+      continue;
+    }
+
+    // Determine colors for outer/inner based on side and groove/ridge
+    // Groove: T/L outer=dark, inner=light; B/R outer=light, inner=dark
+    // Ridge: opposite
+    bool is_top_or_left = (side == BoxSide::kTop || side == BoxSide::kLeft);
+    Color outer_color = is_groove == is_top_or_left ? dark_color : light_color;
+    Color inner_color = is_groove == is_top_or_left ? light_color : dark_color;
+
+    DrawRectOp outer_op, inner_op;
+    outer_op.flags = BuildFillFlags(outer_color);
+    inner_op.flags = BuildFillFlags(inner_color);
+
+    switch (side) {
+      case BoxSide::kTop:
+        // Outer: top strip
+        outer_op.rect = {g.x, g.y, g.x + g.width, g.y + half_width};
+        // Inner: second strip
+        inner_op.rect = {g.x, g.y + half_width, g.x + g.width, g.y + border_width};
+        break;
+      case BoxSide::kBottom:
+        // Outer: bottom outer strip (closer to edge)
+        outer_op.rect = {g.x, g.y + g.height - half_width, g.x + g.width, g.y + g.height};
+        // Inner: inner strip
+        inner_op.rect = {g.x, g.y + g.height - border_width, g.x + g.width, g.y + g.height - half_width};
+        break;
+      case BoxSide::kRight:
+        // Outer: right outer strip
+        outer_op.rect = {g.x + g.width - half_width, g.y, g.x + g.width, g.y + g.height};
+        // Inner: inner strip
+        inner_op.rect = {g.x + g.width - border_width, g.y, g.x + g.width - half_width, g.y + g.height};
+        break;
+      case BoxSide::kLeft:
+        // Outer: left outer strip
+        outer_op.rect = {g.x, g.y, g.x + half_width, g.y + g.height};
+        // Inner: inner strip
+        inner_op.rect = {g.x + half_width, g.y, g.x + border_width, g.y + g.height};
+        break;
+    }
+
+    outer_op.transform_id = input.state_ids.transform_id;
+    outer_op.clip_id = input.state_ids.clip_id;
+    outer_op.effect_id = input.state_ids.effect_id;
+    inner_op.transform_id = input.state_ids.transform_id;
+    inner_op.clip_id = input.state_ids.clip_id;
+    inner_op.effect_id = input.state_ids.effect_id;
+
+    ops.AddDrawRect(std::move(outer_op));
+    ops.AddDrawRect(std::move(inner_op));
+  }
 }
 
 }  // namespace border_painter

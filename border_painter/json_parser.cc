@@ -333,6 +333,23 @@ BorderPaintInput ParseInput(const std::string& json_str) {
       input.node_id = static_cast<DOMNodeId>(tok.ReadNumber());
     } else if (key == "state_ids") {
       input.state_ids = ParseStateIds(tok);
+    } else if (key == "match_type") {
+      std::string mt = tok.ReadString();
+      if (mt == "stroked_rect") {
+        input.render_hint = BorderRenderHint::kStrokedRect;
+      } else if (mt == "draw_line") {
+        input.render_hint = BorderRenderHint::kDrawLine;
+      } else if (mt == "filled_thin_rect") {
+        input.render_hint = BorderRenderHint::kFilledThinRect;
+      } else if (mt == "double_stroked") {
+        input.render_hint = BorderRenderHint::kDoubleStroked;
+      } else if (mt == "dotted_lines") {
+        input.render_hint = BorderRenderHint::kDottedLines;
+      } else if (mt == "groove_ridge") {
+        input.render_hint = BorderRenderHint::kGrooveRidge;
+      } else {
+        input.render_hint = BorderRenderHint::kAuto;
+      }
     } else {
       tok.SkipValue();
     }

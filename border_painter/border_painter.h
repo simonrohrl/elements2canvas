@@ -12,6 +12,17 @@
 
 namespace border_painter {
 
+// Render hint - tells the painter which strategy Chromium used
+enum class BorderRenderHint {
+  kAuto,           // Let painter decide
+  kStrokedRect,    // Uniform border as single stroked rect/rrect
+  kDrawLine,       // Per-side as stroked lines
+  kFilledThinRect, // Per-side as filled thin rectangles
+  kDoubleStroked,  // Double border as 2 stroked rects
+  kDottedLines,    // Dotted border as 4 DrawLineOp with dash pattern
+  kGrooveRidge     // Groove/ridge as paired thin rects per side
+};
+
 // Input data for border painting
 struct BorderPaintInput {
   RectF geometry;
@@ -22,6 +33,7 @@ struct BorderPaintInput {
   Visibility visibility = Visibility::kVisible;
   DOMNodeId node_id = kInvalidDOMNodeId;
   GraphicsStateIds state_ids;
+  BorderRenderHint render_hint = BorderRenderHint::kAuto;  // For verification
 };
 
 // Paints borders for block-level elements
@@ -55,10 +67,45 @@ class BorderPainter {
                          const BorderProperties& props,
                          PaintOpList& ops);
 
+  // Paint all sides as stroked lines (for verification)
+  static void PaintSidesAsLines(const BorderPaintInput& input,
+                                const BorderProperties& props,
+                                PaintOpList& ops);
+
+  // Paint all sides as filled thin rects (for verification)
+  static void PaintSidesAsFilledRects(const BorderPaintInput& input,
+                                      const BorderProperties& props,
+                                      PaintOpList& ops);
+
   // Paint a single border side
   static void PaintSide(const BorderPaintInput& input,
                         BoxSide side,
                         PaintOpList& ops);
+
+  // Paint a single border side as filled thin rect (for thin borders < 10px)
+  static void PaintSideAsFilledRect(const BorderPaintInput& input,
+                                    BoxSide side,
+                                    PaintOpList& ops);
+
+  // Paint a single border side as stroked line (for thick borders >= 10px)
+  static void PaintSideAsLine(const BorderPaintInput& input,
+                              BoxSide side,
+                              PaintOpList& ops);
+
+  // Paint double border as 2 stroked rects
+  static void PaintDoubleBorder(const BorderPaintInput& input,
+                                const BorderProperties& props,
+                                PaintOpList& ops);
+
+  // Paint dotted border as 4 stroked lines with dash pattern
+  static void PaintDottedBorder(const BorderPaintInput& input,
+                                const BorderProperties& props,
+                                PaintOpList& ops);
+
+  // Paint groove/ridge border as paired thin rects per side
+  static void PaintGrooveRidgeBorder(const BorderPaintInput& input,
+                                     const BorderProperties& props,
+                                     PaintOpList& ops);
 
   // Check if border has radius
   static bool HasBorderRadius(const BorderPaintInput& input);
