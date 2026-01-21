@@ -313,13 +313,27 @@
             if (fragment.runs && fragment.runs.length > 0) {
               for (const run of fragment.runs) {
                 if (run.glyphs && run.positions) {
-                  // Use collapsed text with fragment positions
-                  const fragmentText = collapsedFullText.substring(fragment.start, fragment.end);
+                  // IMPORTANT: Trust glyph count over fragment boundaries
+                  // Fragment start/end can be incorrect (point outside valid range)
+                  // The glyph count tells us exactly how many characters were shaped
+                  const glyphCount = run.glyphs.length;
+
+                  // Try fragment boundaries first, but validate against glyph count
+                  let fragmentText = collapsedFullText.substring(fragment.start, fragment.end);
+
+                  // If fragment text length doesn't match glyph count, use full text
+                  if (fragmentText.length !== glyphCount) {
+                    // Fragment boundaries are wrong - use full collapsed text if glyph count matches
+                    if (collapsedFullText.length === glyphCount) {
+                      fragmentText = collapsedFullText;
+                    }
+                    // Otherwise keep the mismatched text for debugging
+                  }
 
                   textNodes.push({
                     id: node.id,
                     name: node.name,
-                    text: fragmentText,  // Already collapsed
+                    text: fragmentText,
                     originalText: node.text,
                     collapsedFullText: collapsedFullText,
                     start: fragment.start,
@@ -357,11 +371,14 @@
       return collapsed;
     }
 
-    // Shape text using CanvasKit Paragraph API (includes HarfBuzz shaping with kerning)
+    // Shape text using CanvasKit Paragraph API
     // NOTE: text is expected to already be collapsed (from extractTextNodes)
     function shapeText(text, style) {
-      // Text should already be collapsed from extractTextNodes, but ensure it
       const collapsedText = text;
+
+      let glyphs = [];
+      let positions = [];
+      let advances = [];
 
       // Build paragraph style
       const paraStyle = new CanvasKit.ParagraphStyle({
@@ -388,9 +405,6 @@
       // Get shaped lines with glyph positions
       const shapedLines = paragraph.getShapedLines();
 
-      let glyphs = [];
-      let positions = [];
-
       if (shapedLines && shapedLines.length > 0) {
         for (const line of shapedLines) {
           if (line.runs) {
@@ -400,8 +414,23 @@
                 glyphs = glyphs.concat(Array.from(run.glyphs));
 
                 // Positions are [x0, y0, x1, y1, ...] - extract just x values
+                const xPositions = [];
                 for (let i = 0; i < run.glyphs.length; i++) {
-                  positions.push(run.positions[i * 2]); // x position
+                  xPositions.push(run.positions[i * 2]); // x position
+                }
+                positions = positions.concat(xPositions);
+
+                // Calculate advances: advance[i] = position[i+1] - position[i]
+                for (let i = 0; i < xPositions.length; i++) {
+                  if (i < xPositions.length - 1) {
+                    advances.push(xPositions[i + 1] - xPositions[i]);
+                  } else {
+                    // Last glyph - use glyph width
+                    const font = new CanvasKit.Font(arialTypeface, style.fontSize);
+                    const lastGlyphWidth = font.getGlyphWidths(new Uint16Array([run.glyphs[i]]))[0] || 0;
+                    advances.push(lastGlyphWidth);
+                    font.delete();
+                  }
                 }
               }
             }
@@ -419,6 +448,7 @@
         let currentX = 0;
         for (let i = 0; i < collapsedText.length; i++) {
           positions.push(currentX);
+          advances.push(glyphWidths[i] || 0);
           currentX += (glyphWidths[i] || 0);
           if (style.letterSpacing) currentX += style.letterSpacing;
           if (style.wordSpacing && (collapsedText[i] === ' ' || collapsedText[i] === '\u00A0')) {
@@ -432,20 +462,26 @@
       paragraph.delete();
       builder.delete();
 
-      return { glyphs, positions, collapsedText };
+      return { glyphs, positions, advances, collapsedText };
     }
 
     // Compare positions with tolerance
-    function comparePositions(chromiumPos, canvaskitPos, tolerance = 0.5) {
+    // letterSpacing: CanvasKit adds letterSpacing/2 as initial offset, Chromium starts at 0
+    function comparePositions(chromiumPos, canvaskitPos, tolerance = 0.5, letterSpacing = 0) {
       if (chromiumPos.length !== canvaskitPos.length) {
         return { match: false, reason: 'length mismatch' };
       }
+
+      // CanvasKit Paragraph API adds letterSpacing/2 as initial X offset
+      // Chromium starts at position 0. Correct for this offset.
+      const letterSpacingOffset = letterSpacing / 2;
+      const correctedCkPos = canvaskitPos.map(pos => pos - letterSpacingOffset);
 
       const diffs = [];
       let maxDiff = 0;
 
       for (let i = 0; i < chromiumPos.length; i++) {
-        const diff = Math.abs(chromiumPos[i] - canvaskitPos[i]);
+        const diff = Math.abs(chromiumPos[i] - correctedCkPos[i]);
         diffs.push(diff);
         maxDiff = Math.max(maxDiff, diff);
       }
@@ -454,7 +490,9 @@
         match: maxDiff <= tolerance,
         maxDiff,
         diffs,
-        avgDiff: diffs.reduce((a, b) => a + b, 0) / diffs.length
+        avgDiff: diffs.reduce((a, b) => a + b, 0) / diffs.length,
+        letterSpacingOffset,
+        correctedCkPos
       };
     }
 
@@ -491,7 +529,8 @@
         const comparison = comparePositions(
           node.chromiumPositions,
           canvaskitResult.positions,
-          tolerance
+          tolerance,
+          node.style.letterSpacing || 0
         );
 
         if (comparison.match) {
@@ -509,6 +548,10 @@
           debugLog(`CanvasKit glyphs: [${canvaskitResult.glyphs.slice(0, 10).join(', ')}${canvaskitResult.glyphs.length > 10 ? '...' : ''}]`);
           debugLog(`Chromium positions: [${node.chromiumPositions.slice(0, 10).map(p => p.toFixed(3)).join(', ')}]`);
           debugLog(`CanvasKit positions: [${canvaskitResult.positions.slice(0, 10).map(p => p.toFixed(3)).join(', ')}]`);
+          if (comparison.letterSpacingOffset > 0) {
+            debugLog(`Letter-spacing offset correction: ${comparison.letterSpacingOffset.toFixed(3)} (letterSpacing/2)`);
+            debugLog(`CK positions (corrected): [${comparison.correctedCkPos.slice(0, 10).map(p => p.toFixed(3)).join(', ')}]`);
+          }
 
           // Calculate advances
           if (comparison.reason !== 'length mismatch') {

@@ -1009,7 +1009,7 @@ index e2256766d7..dd2bfae61d 100644
      "graphics/paint/property_tree_state.h",
      "graphics/paint/raster_invalidation_tracking.cc",
 diff --git a/third_party/blink/renderer/platform/fonts/shaping/shape_result.cc b/third_party/blink/renderer/platform/fonts/shaping/shape_result.cc
-index 30fa92a44b..c7e9959694 100644
+index 30fa92a44b..b774d8abfd 100644
 --- a/third_party/blink/renderer/platform/fonts/shaping/shape_result.cc
 +++ b/third_party/blink/renderer/platform/fonts/shaping/shape_result.cc
 @@ -39,6 +39,7 @@
@@ -1020,50 +1020,6 @@ index 30fa92a44b..c7e9959694 100644
  #include "base/memory/ptr_util.h"
  #include "base/numerics/safe_conversions.h"
  #include "build/build_config.h"
-@@ -1524,6 +1525,13 @@ void ShapeResult::ComputeGlyphPositions(ShapeResultRun* run,
- 
-   DCHECK_LE(num_glyphs, HarfBuzzRunGlyphData::kMaxGlyphs);
- 
-+  // === RAW HARFBUZZ LOGGING START ===
-+  // Log raw HarfBuzz output before any Chromium post-processing
-+  LOG(INFO) << "[HB_RAW] Run start_cluster=" << start_cluster
-+            << " num_glyphs=" << num_glyphs
-+            << " num_chars=" << run->num_characters_;
-+  // === RAW HARFBUZZ LOGGING END ===
-+
-   // Compute glyph_origin in physical, since offsets of glyphs are in physical.
-   // It's the caller's responsibility to convert to logical.
-   InlineLayoutUnit total_advance;
-@@ -1542,6 +1550,17 @@ void ShapeResult::ComputeGlyphPositions(ShapeResultRun* run,
-         is_horizontal_run ? HarfBuzzPositionToTextLayoutUnit(pos.x_advance)
-                           : -HarfBuzzPositionToTextLayoutUnit(pos.y_advance);
- 
-+    // === RAW HARFBUZZ LOGGING START ===
-+    // Log each glyph's raw HarfBuzz data
-+    LOG(INFO) << "[HB_RAW] glyph[" << i << "]: "
-+              << "id=" << glyph.codepoint
-+              << " cluster=" << glyph.cluster
-+              << " x_advance_hb=" << pos.x_advance
-+              << " x_advance_float=" << HarfBuzzPositionToFloat(pos.x_advance)
-+              << " x_offset=" << pos.x_offset
-+              << " y_offset=" << pos.y_offset;
-+    // === RAW HARFBUZZ LOGGING END ===
-+
-     DCHECK_GE(glyph.cluster, start_cluster);
-     const uint16_t character_index = glyph.cluster - start_cluster;
-     DCHECK_LE(character_index, HarfBuzzRunGlyphData::kMaxCharacterIndex);
-@@ -1563,6 +1582,11 @@ void ShapeResult::ComputeGlyphPositions(ShapeResultRun* run,
-     total_advance += advance;
-   }
- 
-+  // === RAW HARFBUZZ LOGGING START ===
-+  LOG(INFO) << "[HB_RAW] Run total_width=" << run->width_
-+            << " total_advance=" << total_advance.ToFloat();
-+  // === RAW HARFBUZZ LOGGING END ===
-+
-   run->width_ = total_advance.ClampNegativeToZero().ToFloat();
-   has_vertical_offsets_ |= has_vertical_offsets;
-   run->CheckConsistency();
 diff --git a/third_party/blink/renderer/platform/fonts/shaping/text_blob_serializer.cc b/third_party/blink/renderer/platform/fonts/shaping/text_blob_serializer.cc
 new file mode 100644
 index 0000000000..36cbff9230

@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Extract JSON data from chrome_debug.log
-# Extracts RAW_PAINT_OPS, LAYOUT_TREE, LAYER_TREE, STACKING_NODES, and PROPERTY_TREES to JSON files
+# Extracts RAW_PAINT_OPS, LAYOUT_TREE, LAYER_TREE, STACKING_NODES, PROPERTY_TREES to JSON files
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
