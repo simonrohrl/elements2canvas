@@ -931,9 +931,37 @@ class RawPaintOpsCompositor {
         let currentTransformId = null;
         let currentTransformMatrix = null;
         let currentEffectId = null;
+        let currentClipId = null;
         let effectLayerStack = [];
+        let clipLayerStack = [];  // Track clip layers for proper restoration
 
         for (const op of paintOps) {
+            // Check if we need to change clip (from property tree clip_path)
+            if (op.clip_id !== currentClipId && op.clip_id !== undefined) {
+                // Restore previous clip layers
+                while (clipLayerStack.length > 0) {
+                    canvas.restore();
+                    clipLayerStack.pop();
+                }
+                // Reset transform tracking since restore clears it
+                currentTransformMatrix = null;
+                currentTransformId = null;
+
+                // Apply new clip if needed
+                const clipNode = trees.getClip(op.clip_id);
+                if (clipNode && clipNode.clip_path) {
+                    // CSS clip-path from property tree
+                    canvas.save();
+                    clipLayerStack.push(op.clip_id);
+                    const path = this.ck.Path.MakeFromSVGString(clipNode.clip_path);
+                    if (path) {
+                        canvas.clipPath(path, this.ck.ClipOp.Intersect, true);
+                        path.delete();
+                    }
+                }
+                currentClipId = op.clip_id;
+            }
+
             // Check if we need to change transform
             // Use inverse matrix approach to preserve clip state (no save/restore)
             if (op.transform_id !== currentTransformId && op.transform_id !== undefined) {
@@ -1010,6 +1038,12 @@ class RawPaintOpsCompositor {
         while (effectLayerStack.length > 0) {
             canvas.restore();
             effectLayerStack.pop();
+        }
+
+        // Clean up any remaining clip layers
+        while (clipLayerStack.length > 0) {
+            canvas.restore();
+            clipLayerStack.pop();
         }
 
         this.surface.flush();
