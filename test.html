@@ -820,20 +820,13 @@ class PaintOpRenderer {
     }
 
     drawTextBlobWithRuns(canvas, op) {
-        const paint = new this.ck.Paint();
-        paint.setAntiAlias(true);
-
-        if (op.flags) {
-            const c = op.flags;
-            paint.setColor(this.ck.Color4f(c.r || 0, c.g || 0, c.b || 0, c.a || 1));
-        } else {
-            paint.setColor(this.ck.BLACK);
-        }
-
         const POSITIONING_DEFAULT = 0;
         const POSITIONING_HORIZONTAL = 1;
         const POSITIONING_FULL = 2;
         const POSITIONING_RSXFORM = 3;
+
+        // Pre-create all text blobs for shadow and normal rendering
+        const textBlobData = [];
 
         for (const run of op.runs) {
             if (!run.glyphs || run.glyphCount <= 0) continue;
@@ -897,14 +890,87 @@ class PaintOpRenderer {
             if (blob) {
                 const drawX = (op.x || 0) + (run.offsetX || 0);
                 const drawY = (op.y || 0) + (run.offsetY || 0);
-                canvas.drawTextBlob(blob, drawX, drawY, paint);
-                blob.delete();
+                textBlobData.push({ blob, drawX, drawY, font });
+            } else {
+                font.delete();
             }
-
-            font.delete();
         }
 
+        // Apply shadows first if present
+        const shadowResult = this.applyShadows(canvas, op, (c, shadowPaint) => {
+            for (const item of textBlobData) {
+                c.drawTextBlob(item.blob, item.drawX, item.drawY, shadowPaint);
+            }
+        });
+
+        // If shadow-only draw, cleanup and return
+        if (shadowResult === 'shadow_only') {
+            for (const item of textBlobData) {
+                item.blob.delete();
+                item.font.delete();
+            }
+            if (this.debug) {
+                this.log(`DrawTextBlob at (${op.x}, ${op.y}) (shadow-only)`);
+            }
+            return;
+        }
+
+        // Draw normal text with original paint
+        const paint = new this.ck.Paint();
+        paint.setAntiAlias(true);
+
+        if (op.flags) {
+            const c = op.flags;
+            paint.setColor(this.ck.Color4f(c.r || 0, c.g || 0, c.b || 0, c.a || 1));
+
+            // Handle stroke vs fill style
+            if (c.style === 1) {
+                paint.setStyle(this.ck.PaintStyle.Stroke);
+                paint.setStrokeWidth(c.strokeWidth || 1);
+
+                // Apply stroke cap
+                if (c.strokeCap === 1) {
+                    paint.setStrokeCap(this.ck.StrokeCap.Round);
+                } else if (c.strokeCap === 2) {
+                    paint.setStrokeCap(this.ck.StrokeCap.Square);
+                } else {
+                    paint.setStrokeCap(this.ck.StrokeCap.Butt);
+                }
+
+                // Apply stroke join
+                if (c.strokeJoin === 1) {
+                    paint.setStrokeJoin(this.ck.StrokeJoin.Round);
+                } else if (c.strokeJoin === 2) {
+                    paint.setStrokeJoin(this.ck.StrokeJoin.Bevel);
+                } else {
+                    paint.setStrokeJoin(this.ck.StrokeJoin.Miter);
+                }
+            } else {
+                paint.setStyle(this.ck.PaintStyle.Fill);
+            }
+        } else {
+            paint.setColor(this.ck.BLACK);
+            paint.setStyle(this.ck.PaintStyle.Fill);
+        }
+
+        for (const item of textBlobData) {
+            canvas.drawTextBlob(item.blob, item.drawX, item.drawY, paint);
+        }
+
+        // Cleanup
         paint.delete();
+        for (const item of textBlobData) {
+            item.blob.delete();
+            item.font.delete();
+        }
+
+        if (this.debug) {
+            const styleInfo = op.flags?.style === 1 ? ' (stroke)' : '';
+            const shadowInfo = shadowResult ? ' with shadows' : '';
+            if (styleInfo || shadowInfo) {
+                this.log(`DrawTextBlob at (${op.x}, ${op.y})${styleInfo}${shadowInfo}`);
+            }
+        }
     }
 }
 

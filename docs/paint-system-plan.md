@@ -8,7 +8,7 @@ Build a paint system that replicates Chromium's rendering pipeline to produce `r
                          INPUTS (from Chromium logging)
 ┌─────────────────────────────────────────────────────────────────┐
 │  layout_tree.json      - LayoutObject tree with geometry        │
-│  property_trees.json   - Transform/Clip/Effect trees (NEW)      │
+│  property_trees.json   - Transform/Clip/Effect trees            │
 └─────────────────────────────────────────────────────────────────┘
                                     │
                                     ▼
@@ -65,9 +65,7 @@ The paint system needs these inputs to produce `raw_paint_ops.json`:
 - **layout_tree.json** - LayoutObject tree with computed styles
 - **layer_tree.json** - PaintLayer tree (computed)
 - **stacking_nodes.json** - Z-order lists for paint ordering (computed)
-
-### Need to Generate as Input
-- **property_trees.json** - Transform, Clip, Effect trees (NEW)
+- **property_trees.json** - Transform, Clip, Effect trees
 
 The serialization for property trees **already exists** in `paint_artifact_serializer.cc`:
 - `SerializeTransformTree()` - lines 640-689
@@ -81,17 +79,11 @@ We need to call this serialization and output it as a **separate input file**, n
 
 ## Missing Data for Paint Replication
 
-### 1. Property Trees as Input (CRITICAL)
-Need `property_trees.json` with:
-- **Transform tree**: id → matrix/translation mapping
-- **Clip tree**: id → clip_rect mapping
-- **Effect tree**: id → opacity/blend_mode mapping
-
-### 2. Geometry Data (CRITICAL)
+### 1. Geometry Data (CRITICAL)
 - **Box geometry**: x, y, width, height for each LayoutObject
 - **Border radii**: corner radius values
 
-### 3. Mapping LayoutObjects to Property Tree Nodes
+### 2. Mapping LayoutObjects to Property Tree Nodes
 - Which transform_id, clip_id, effect_id applies to each LayoutObject
 - Text data already available in DrawTextBlobOp format
 

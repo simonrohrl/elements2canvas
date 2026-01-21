@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Extract JSON data from chrome_debug.log
-# Extracts RAW_PAINT_OPS, LAYOUT_TREE, LAYER_TREE, and STACKING_NODES to JSON files
+# Extracts RAW_PAINT_OPS, LAYOUT_TREE, LAYER_TREE, STACKING_NODES, and PROPERTY_TREES to JSON files
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -10,6 +10,7 @@ RAW_PAINT_OPS_FILE="$PROJECT_DIR/raw_paint_ops.json"
 LAYOUT_TREE_FILE="$PROJECT_DIR/layout_tree.json"
 LAYER_TREE_FILE="$PROJECT_DIR/layer_tree.json"
 STACKING_NODES_FILE="$PROJECT_DIR/stacking_nodes.json"
+PROPERTY_TREES_FILE="$PROJECT_DIR/property_trees.json"
 
 if [ ! -f "$LOG_FILE" ]; then
     echo "Error: $LOG_FILE not found"
@@ -17,10 +18,10 @@ if [ ! -f "$LOG_FILE" ]; then
 fi
 
 # delete files to start fresh
-rm -f "$RAW_PAINT_OPS_FILE" "$LAYOUT_TREE_FILE" "$LAYER_TREE_FILE" "$STACKING_NODES_FILE"
+rm -f "$RAW_PAINT_OPS_FILE" "$LAYOUT_TREE_FILE" "$LAYER_TREE_FILE" "$STACKING_NODES_FILE" "$PROPERTY_TREES_FILE"
 echo "Deleted old files to start fresh"
 
-python3 - "$LOG_FILE" "$RAW_PAINT_OPS_FILE" "$LAYOUT_TREE_FILE" "$LAYER_TREE_FILE" "$STACKING_NODES_FILE" << 'PYTHON_SCRIPT'
+python3 - "$LOG_FILE" "$RAW_PAINT_OPS_FILE" "$LAYOUT_TREE_FILE" "$LAYER_TREE_FILE" "$STACKING_NODES_FILE" "$PROPERTY_TREES_FILE" << 'PYTHON_SCRIPT'
 import json
 import sys
 
@@ -29,6 +30,7 @@ raw_paint_ops_file = sys.argv[2]
 layout_tree_file = sys.argv[3]
 layer_tree_file = sys.argv[4]
 stacking_nodes_file = sys.argv[5]
+property_trees_file = sys.argv[6]
 
 with open(log_file, 'r', errors='ignore') as f:
     content = f.read()
@@ -112,4 +114,24 @@ if paint_order_start != -1:
         print(f"  Warning: Failed to parse PAINT_ORDER JSON: {e}")
 else:
     print("  Warning: PAINT_ORDER not found in log")
+
+# Extract PROPERTY_TREES JSON (transform, clip, effect trees)
+# The format is: PROPERTY_TREES: {"transform_tree": {...}, "clip_tree": {...}, "effect_tree": {...}}
+# The JSON is on a single line
+property_trees_start = content.find('PROPERTY_TREES: ')
+if property_trees_start != -1:
+    json_start = property_trees_start + len('PROPERTY_TREES: ')
+    line_end = content.find('\n', json_start)
+    if line_end == -1:
+        line_end = len(content)
+    property_trees_json_str = content[json_start:line_end].strip()
+    try:
+        data = json.loads(property_trees_json_str)
+        with open(property_trees_file, 'w') as out:
+            json.dump(data, out, indent=3)
+        print(f"  Extracted {property_trees_file}")
+    except json.JSONDecodeError as e:
+        print(f"  Warning: Failed to parse PROPERTY_TREES JSON: {e}")
+else:
+    print("  Warning: PROPERTY_TREES not found in log")
 PYTHON_SCRIPT
