@@ -1,5 +1,5 @@
 diff --git a/chrome/app/chrome_main_delegate.cc b/chrome/app/chrome_main_delegate.cc
-index 1cbcce0303..641b7260be 100644
+index 1cbcce0303..29f69ab5e4 100644
 --- a/chrome/app/chrome_main_delegate.cc
 +++ b/chrome/app/chrome_main_delegate.cc
 @@ -10,6 +10,7 @@
@@ -25,15 +25,12 @@ index 1cbcce0303..641b7260be 100644
  #include "content/public/app/initialize_mojo_core.h"
  #include "content/public/common/content_client.h"
  #include "content/public/common/content_constants.h"
-@@ -1063,6 +1066,32 @@ std::optional<int> ChromeMainDelegate::BasicStartupComplete() {
+@@ -1063,6 +1066,29 @@ std::optional<int> ChromeMainDelegate::BasicStartupComplete() {
    ash::BootTimesRecorder::Get()->SaveChromeMainStats();
  #endif
  
 +  // Append default flags so users don't need to pass them on the CLI.
 +  base::CommandLine* cmd = base::CommandLine::ForCurrentProcess();
-+
-+  if (!cmd->HasSwitch(switches::kRunAllCompositorStagesBeforeDraw))
-+    cmd->AppendSwitch(switches::kRunAllCompositorStagesBeforeDraw);
 +
 +  if (!cmd->HasSwitch(switches::kEnableLogging))
 +    cmd->AppendSwitch(switches::kEnableLogging);
