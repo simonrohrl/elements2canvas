@@ -610,16 +610,10 @@ class PaintOpRenderer {
     }
 
     drawPath(canvas, op) {
-        if (!op.path) {
-            console.log('DrawPathOp: no path data');
-            return;
-        }
+        if (!op.path) return;
 
         const path = this.ck.Path.MakeFromSVGString(op.path);
-        if (!path) {
-            console.log('DrawPathOp: failed to parse path:', op.path);
-            return;
-        }
+        if (!path) return;
 
         if (op.fillType !== undefined) {
             const fillTypes = [
@@ -771,13 +765,6 @@ class PaintOpRenderer {
         const destRight = destRect[2];
         const destBottom = destRect[3];
 
-        console.log('drawTiledPattern called:', {
-            tileRect,
-            tileRecordLength: tileRecord?.length,
-            destRect: [destLeft, destTop, destRight, destBottom],
-            tileRecordOps: tileRecord?.map(o => o.type)
-        });
-
         if (!tileRect || !tileRecord || tileRecord.length === 0) {
             if (this.debug) this.log('drawTiledPattern: missing tile data');
             return;
@@ -799,21 +786,9 @@ class PaintOpRenderer {
         // Translate to destination origin
         canvas.translate(destLeft, destTop);
 
-        // Debug: draw a visible border to verify we're here
-        const debugPaint = new this.ck.Paint();
-        debugPaint.setColor(this.ck.Color4f(1, 0, 1, 1)); // Magenta
-        debugPaint.setStyle(this.ck.PaintStyle.Stroke);
-        debugPaint.setStrokeWidth(2);
-        canvas.drawRect(this.ck.LTRBRect(0, 0, destWidth, destHeight), debugPaint);
-        debugPaint.delete();
-        console.log('Drew debug border at dest rect');
-
         // Calculate how many tiles we need
         const tilesX = Math.ceil(destWidth / tileWidth) + 1;
         const tilesY = Math.ceil(destHeight / tileHeight) + 1;
-
-        // Draw the tile pattern repeatedly
-        console.log(`Drawing ${tilesX}x${tilesY} tiles, tileSize: ${tileWidth}x${tileHeight}, dest: ${destWidth}x${destHeight}`);
         for (let ty = 0; ty < tilesY; ty++) {
             for (let tx = 0; tx < tilesX; tx++) {
                 canvas.save();
@@ -821,9 +796,6 @@ class PaintOpRenderer {
 
                 // Render each op in the tile record
                 for (const tileOp of tileRecord) {
-                    if (tx === 0 && ty === 0) {
-                        console.log('Rendering tileOp:', tileOp.type, tileOp);
-                    }
                     this.renderOp(canvas, tileOp);
                 }
 
