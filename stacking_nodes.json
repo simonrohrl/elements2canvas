@@ -283,6 +283,81 @@
                "id": 80,
                "name": "LayoutFlexibleBox DIV class='opacity-item'.opacity-item",
                "z_index": 0
+            },
+            {
+               "id": 81,
+               "name": "LayoutBlockFlow (relative positioned, children-inline) DIV class='image-container object-cover'.image-container.object-cover",
+               "z_index": 0
+            },
+            {
+               "id": 82,
+               "name": "LayoutBlockFlow (positioned, children-inline) DIV class='image-label'.image-label",
+               "z_index": 0
+            },
+            {
+               "id": 83,
+               "name": "LayoutBlockFlow (relative positioned, children-inline) DIV class='image-container object-contain'.image-container.object-contain",
+               "z_index": 0
+            },
+            {
+               "id": 84,
+               "name": "LayoutBlockFlow (positioned, children-inline) DIV class='image-label'.image-label",
+               "z_index": 0
+            },
+            {
+               "id": 85,
+               "name": "LayoutBlockFlow (relative positioned, children-inline) DIV class='image-container object-fill'.image-container.object-fill",
+               "z_index": 0
+            },
+            {
+               "id": 86,
+               "name": "LayoutBlockFlow (positioned, children-inline) DIV class='image-label'.image-label",
+               "z_index": 0
+            },
+            {
+               "id": 87,
+               "name": "LayoutBlockFlow (relative positioned, children-inline) DIV class='image-container object-none'.image-container.object-none",
+               "z_index": 0
+            },
+            {
+               "id": 88,
+               "name": "LayoutBlockFlow (positioned, children-inline) DIV class='image-label'.image-label",
+               "z_index": 0
+            },
+            {
+               "id": 91,
+               "name": "LayoutImage IMG",
+               "z_index": 0
+            },
+            {
+               "id": 93,
+               "name": "LayoutImage IMG",
+               "z_index": 0
+            },
+            {
+               "id": 95,
+               "name": "LayoutImage IMG",
+               "z_index": 0
+            },
+            {
+               "id": 97,
+               "name": "LayoutImage IMG",
+               "z_index": 0
+            },
+            {
+               "id": 99,
+               "name": "LayoutImage IMG",
+               "z_index": 0
+            },
+            {
+               "id": 104,
+               "name": "LayoutSVGRoot (block) svg class='svg-icon svg-colored svg-with-shadow'.svg-icon.svg-colored.svg-with-shadow",
+               "z_index": 0
+            },
+            {
+               "id": 105,
+               "name": "LayoutSVGRoot (block) svg class='svg-icon svg-colored svg-rotate'.svg-icon.svg-colored.svg-rotate",
+               "z_index": 0
             }
          ]
       },

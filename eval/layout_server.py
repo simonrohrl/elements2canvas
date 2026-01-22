@@ -84,7 +84,7 @@ async def main():
     print("Run ./scripts/start.sh to launch Chromium")
     print("=" * 60)
 
-    async with websockets.serve(handle_websocket, "localhost", WS_PORT):
+    async with websockets.serve(handle_websocket, "localhost", WS_PORT, max_size=50 * 1024 * 1024):
         await asyncio.Future()
 
 

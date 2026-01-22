@@ -71,7 +71,24 @@
             77,
             78,
             79,
-            80
+            80,
+            81,
+            83,
+            85,
+            87,
+            89,
+            90,
+            92,
+            94,
+            96,
+            98,
+            100,
+            101,
+            102,
+            103,
+            104,
+            105,
+            106
          ],
          "depth": 1
       },
@@ -983,6 +1000,310 @@
          "is_stacking_context": true,
          "is_stacked": true,
          "is_self_painting": true,
+         "parent_id": 1,
+         "children": [],
+         "depth": 2
+      },
+      {
+         "id": 81,
+         "name": "LayoutBlockFlow (relative positioned, children-inline) DIV class='image-container object-cover'.image-container.object-cover",
+         "z_index": 0,
+         "is_stacking_context": false,
+         "is_stacked": true,
+         "is_self_painting": true,
+         "parent_id": 1,
+         "children": [
+            82
+         ],
+         "depth": 2
+      },
+      {
+         "id": 82,
+         "name": "LayoutBlockFlow (positioned, children-inline) DIV class='image-label'.image-label",
+         "z_index": 0,
+         "is_stacking_context": false,
+         "is_stacked": true,
+         "is_self_painting": true,
+         "parent_id": 81,
+         "children": [],
+         "depth": 3
+      },
+      {
+         "id": 83,
+         "name": "LayoutBlockFlow (relative positioned, children-inline) DIV class='image-container object-contain'.image-container.object-contain",
+         "z_index": 0,
+         "is_stacking_context": false,
+         "is_stacked": true,
+         "is_self_painting": true,
+         "parent_id": 1,
+         "children": [
+            84
+         ],
+         "depth": 2
+      },
+      {
+         "id": 84,
+         "name": "LayoutBlockFlow (positioned, children-inline) DIV class='image-label'.image-label",
+         "z_index": 0,
+         "is_stacking_context": false,
+         "is_stacked": true,
+         "is_self_painting": true,
+         "parent_id": 83,
+         "children": [],
+         "depth": 3
+      },
+      {
+         "id": 85,
+         "name": "LayoutBlockFlow (relative positioned, children-inline) DIV class='image-container object-fill'.image-container.object-fill",
+         "z_index": 0,
+         "is_stacking_context": false,
+         "is_stacked": true,
+         "is_self_painting": true,
+         "parent_id": 1,
+         "children": [
+            86
+         ],
+         "depth": 2
+      },
+      {
+         "id": 86,
+         "name": "LayoutBlockFlow (positioned, children-inline) DIV class='image-label'.image-label",
+         "z_index": 0,
+         "is_stacking_context": false,
+         "is_stacked": true,
+         "is_self_painting": true,
+         "parent_id": 85,
+         "children": [],
+         "depth": 3
+      },
+      {
+         "id": 87,
+         "name": "LayoutBlockFlow (relative positioned, children-inline) DIV class='image-container object-none'.image-container.object-none",
+         "z_index": 0,
+         "is_stacking_context": false,
+         "is_stacked": true,
+         "is_self_painting": true,
+         "parent_id": 1,
+         "children": [
+            88
+         ],
+         "depth": 2
+      },
+      {
+         "id": 88,
+         "name": "LayoutBlockFlow (positioned, children-inline) DIV class='image-label'.image-label",
+         "z_index": 0,
+         "is_stacking_context": false,
+         "is_stacked": true,
+         "is_self_painting": true,
+         "parent_id": 87,
+         "children": [],
+         "depth": 3
+      },
+      {
+         "id": 89,
+         "name": "LayoutBlockFlow (children-inline) DIV class='filter-box'.filter-box",
+         "z_index": 0,
+         "is_stacking_context": false,
+         "is_stacked": false,
+         "is_self_painting": false,
+         "parent_id": 1,
+         "children": [],
+         "depth": 2
+      },
+      {
+         "id": 90,
+         "name": "LayoutBlockFlow (children-inline) DIV class='filter-box filter-grayscale'.filter-box.filter-grayscale",
+         "z_index": 0,
+         "is_stacking_context": false,
+         "is_stacked": false,
+         "is_self_painting": false,
+         "parent_id": 1,
+         "children": [
+            91
+         ],
+         "depth": 2
+      },
+      {
+         "id": 91,
+         "name": "LayoutImage IMG",
+         "z_index": 0,
+         "is_stacking_context": true,
+         "is_stacked": true,
+         "is_self_painting": true,
+         "parent_id": 90,
+         "children": [],
+         "depth": 3
+      },
+      {
+         "id": 92,
+         "name": "LayoutBlockFlow (children-inline) DIV class='filter-box filter-sepia'.filter-box.filter-sepia",
+         "z_index": 0,
+         "is_stacking_context": false,
+         "is_stacked": false,
+         "is_self_painting": false,
+         "parent_id": 1,
+         "children": [
+            93
+         ],
+         "depth": 2
+      },
+      {
+         "id": 93,
+         "name": "LayoutImage IMG",
+         "z_index": 0,
+         "is_stacking_context": true,
+         "is_stacked": true,
+         "is_self_painting": true,
+         "parent_id": 92,
+         "children": [],
+         "depth": 3
+      },
+      {
+         "id": 94,
+         "name": "LayoutBlockFlow (children-inline) DIV class='filter-box filter-hue-rotate'.filter-box.filter-hue-rotate",
+         "z_index": 0,
+         "is_stacking_context": false,
+         "is_stacked": false,
+         "is_self_painting": false,
+         "parent_id": 1,
+         "children": [
+            95
+         ],
+         "depth": 2
+      },
+      {
+         "id": 95,
+         "name": "LayoutImage IMG",
+         "z_index": 0,
+         "is_stacking_context": true,
+         "is_stacked": true,
+         "is_self_painting": true,
+         "parent_id": 94,
+         "children": [],
+         "depth": 3
+      },
+      {
+         "id": 96,
+         "name": "LayoutBlockFlow (children-inline) DIV class='filter-box filter-invert'.filter-box.filter-invert",
+         "z_index": 0,
+         "is_stacking_context": false,
+         "is_stacked": false,
+         "is_self_painting": false,
+         "parent_id": 1,
+         "children": [
+            97
+         ],
+         "depth": 2
+      },
+      {
+         "id": 97,
+         "name": "LayoutImage IMG",
+         "z_index": 0,
+         "is_stacking_context": true,
+         "is_stacked": true,
+         "is_self_painting": true,
+         "parent_id": 96,
+         "children": [],
+         "depth": 3
+      },
+      {
+         "id": 98,
+         "name": "LayoutBlockFlow (children-inline) DIV class='filter-box filter-brightness'.filter-box.filter-brightness",
+         "z_index": 0,
+         "is_stacking_context": false,
+         "is_stacked": false,
+         "is_self_painting": false,
+         "parent_id": 1,
+         "children": [
+            99
+         ],
+         "depth": 2
+      },
+      {
+         "id": 99,
+         "name": "LayoutImage IMG",
+         "z_index": 0,
+         "is_stacking_context": true,
+         "is_stacked": true,
+         "is_self_painting": true,
+         "parent_id": 98,
+         "children": [],
+         "depth": 3
+      },
+      {
+         "id": 100,
+         "name": "LayoutSVGRoot svg",
+         "z_index": 0,
+         "is_stacking_context": false,
+         "is_stacked": false,
+         "is_self_painting": false,
+         "parent_id": 1,
+         "children": [],
+         "depth": 2
+      },
+      {
+         "id": 101,
+         "name": "LayoutSVGRoot (block) svg class='svg-icon svg-colored'.svg-icon.svg-colored",
+         "z_index": 0,
+         "is_stacking_context": false,
+         "is_stacked": false,
+         "is_self_painting": false,
+         "parent_id": 1,
+         "children": [],
+         "depth": 2
+      },
+      {
+         "id": 102,
+         "name": "LayoutSVGRoot (block) svg class='svg-icon svg-gradient'.svg-icon.svg-gradient",
+         "z_index": 0,
+         "is_stacking_context": false,
+         "is_stacked": false,
+         "is_self_painting": false,
+         "parent_id": 1,
+         "children": [],
+         "depth": 2
+      },
+      {
+         "id": 103,
+         "name": "LayoutSVGRoot (block) svg class='svg-icon svg-stroked'.svg-icon.svg-stroked",
+         "z_index": 0,
+         "is_stacking_context": false,
+         "is_stacked": false,
+         "is_self_painting": false,
+         "parent_id": 1,
+         "children": [],
+         "depth": 2
+      },
+      {
+         "id": 104,
+         "name": "LayoutSVGRoot (block) svg class='svg-icon svg-colored svg-with-shadow'.svg-icon.svg-colored.svg-with-shadow",
+         "z_index": 0,
+         "is_stacking_context": true,
+         "is_stacked": true,
+         "is_self_painting": true,
+         "parent_id": 1,
+         "children": [],
+         "depth": 2
+      },
+      {
+         "id": 105,
+         "name": "LayoutSVGRoot (block) svg class='svg-icon svg-colored svg-rotate'.svg-icon.svg-colored.svg-rotate",
+         "z_index": 0,
+         "is_stacking_context": true,
+         "is_stacked": true,
+         "is_self_painting": true,
+         "parent_id": 1,
+         "children": [],
+         "depth": 2
+      },
+      {
+         "id": 106,
+         "name": "LayoutSVGRoot (block) svg",
+         "z_index": 0,
+         "is_stacking_context": false,
+         "is_stacked": false,
+         "is_self_painting": false,
          "parent_id": 1,
          "children": [],
          "depth": 2

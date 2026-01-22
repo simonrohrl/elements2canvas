@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>CanvasKit TextBlob vs DrawText Test</title>
+  <script src="https://unpkg.com/canvaskit-wasm@0.39.1/bin/canvaskit.js"></script>
+</head>
+<body>
+  <h2>CanvasKit: drawText vs drawTextBlob with MakeFromRSXformGlyphs</h2>
+  <p>Both should show gradient text. If drawTextBlob shows black, that's the bug.</p>
+  <canvas id="canvas" width="600" height="200"></canvas>
+  <pre id="log"></pre>
+
+<script type="module">
+const log = (msg) => {
+    document.getElementById('log').textContent += msg + '\n';
+    console.log(msg);
+};
+
+async function main() {
+    log('Loading CanvasKit...');
+
+    const CanvasKit = await CanvasKitInit({
+        locateFile: (file) => `https://unpkg.com/canvaskit-wasm@0.39.1/bin/${file}`,
+    });
+
+    log('CanvasKit loaded');
+
+    // Load font
+    log('Loading Arial font...');
+    const fontResp = await fetch("Arial.ttf");
+    const fontData = await fontResp.arrayBuffer();
+    const typeface = CanvasKit.Typeface.MakeFreeTypeFaceFromData(fontData);
+    if (!typeface) {
+        log('ERROR: Failed to load font');
+        return;
+    }
+    log('Font loaded');
+
+    const surface = CanvasKit.MakeCanvasSurface('canvas');
+    const canvas = surface.getCanvas();
+    canvas.clear(CanvasKit.WHITE);
+
+    const font = new CanvasKit.Font(typeface, 36);
+    font.setSubpixel(true);
+
+    const text = "Gradient Text";
+
+    // Get glyph IDs for the text
+    const glyphIds = font.getGlyphIDs(text);
+    log(`Glyph IDs: ${Array.from(glyphIds).join(', ')}`);
+
+    // Get glyph widths to calculate positions
+    const glyphWidths = font.getGlyphWidths(glyphIds);
+    log(`Glyph widths: ${Array.from(glyphWidths).join(', ')}`);
+
+    // Calculate x positions (horizontal positioning like Chromium)
+    const positions = [];
+    let xPos = 0;
+    for (let i = 0; i < glyphIds.length; i++) {
+        positions.push(xPos);
+        xPos += glyphWidths[i];
+    }
+    log(`Positions: ${positions.join(', ')}`);
+
+    // Gradient paint for the destination
+    const gradientColors = [
+        CanvasKit.Color4f(0.4, 0.494, 0.918, 1.0),   // blue
+        CanvasKit.Color4f(0.463, 0.294, 0.635, 1.0), // purple
+        CanvasKit.Color4f(0.941, 0.576, 0.984, 1.0)  // pink
+    ];
+
+    // ============================================
+    // TEST 1: Using drawText (known to work)
+    // ============================================
+    log('\n=== Test 1: drawText (should work) ===');
+
+    const outerPaint1 = new CanvasKit.Paint();
+    canvas.saveLayer(outerPaint1);
+
+    const shader1 = CanvasKit.Shader.MakeLinearGradient(
+        [20, 50], [280, 50], gradientColors, [0, 0.5, 1], CanvasKit.TileMode.Clamp
+    );
+    const gradPaint1 = new CanvasKit.Paint();
+    gradPaint1.setShader(shader1);
+    canvas.drawRect(CanvasKit.LTRBRect(20, 20, 280, 80), gradPaint1);
+
+    const dstInPaint1 = new CanvasKit.Paint();
+    dstInPaint1.setBlendMode(CanvasKit.BlendMode.DstIn);
+    canvas.saveLayer(dstInPaint1);
+
+    const textPaint1 = new CanvasKit.Paint();
+    textPaint1.setColor(CanvasKit.BLACK);
+    textPaint1.setAntiAlias(true);
+    canvas.drawText(text, 30, 60, textPaint1, font);  // Using drawText
+
+    canvas.restore();
+    canvas.restore();
+
+    log('Test 1 complete: drawText');
+
+    // ============================================
+    // TEST 2: Using drawTextBlob with MakeFromRSXformGlyphs
+    // ============================================
+    log('\n=== Test 2: drawTextBlob with MakeFromRSXformGlyphs ===');
+
+    // Create RSXform array: [scos, ssin, tx, ty] for each glyph
+    const rsxforms = new Float32Array(glyphIds.length * 4);
+    for (let i = 0; i < glyphIds.length; i++) {
+        rsxforms[i * 4]     = 1.0;  // scos = 1 (no rotation/scale)
+        rsxforms[i * 4 + 1] = 0.0;  // ssin = 0
+        rsxforms[i * 4 + 2] = positions[i];  // tx = x position
+        rsxforms[i * 4 + 3] = 0;    // ty = 0 (baseline)
+    }
+
+    const blob = CanvasKit.TextBlob.MakeFromRSXformGlyphs(glyphIds, rsxforms, font);
+    if (!blob) {
+        log('ERROR: Failed to create TextBlob');
+        return;
+    }
+    log('TextBlob created successfully');
+
+    const outerPaint2 = new CanvasKit.Paint();
+    canvas.saveLayer(outerPaint2);
+
+    const shader2 = CanvasKit.Shader.MakeLinearGradient(
+        [320, 50], [580, 50], gradientColors, [0, 0.5, 1], CanvasKit.TileMode.Clamp
+    );
+    const gradPaint2 = new CanvasKit.Paint();
+    gradPaint2.setShader(shader2);
+    canvas.drawRect(CanvasKit.LTRBRect(320, 20, 580, 80), gradPaint2);
+
+    const dstInPaint2 = new CanvasKit.Paint();
+    dstInPaint2.setBlendMode(CanvasKit.BlendMode.DstIn);
+    canvas.saveLayer(dstInPaint2);
+
+    const textPaint2 = new CanvasKit.Paint();
+    textPaint2.setColor(CanvasKit.BLACK);
+    textPaint2.setAntiAlias(true);
+    canvas.drawTextBlob(blob, 330, 60, textPaint2);  // Using drawTextBlob
+
+    canvas.restore();
+    canvas.restore();
+
+    log('Test 2 complete: drawTextBlob');
+
+    // ============================================
+    // TEST 3: Draw labels
+    // ============================================
+    const labelPaint = new CanvasKit.Paint();
+    labelPaint.setColor(CanvasKit.BLACK);
+    const labelFont = new CanvasKit.Font(typeface, 14);
+    canvas.drawText("drawText (should work)", 30, 100, labelPaint, labelFont);
+    canvas.drawText("drawTextBlob (test)", 330, 100, labelPaint, labelFont);
+
+    surface.flush();
+
+    log('\n=== RESULTS ===');
+    log('Left (drawText): Should show gradient text');
+    log('Right (drawTextBlob): If black, MakeFromRSXformGlyphs has issue with DstIn');
+
+    // Cleanup
+    outerPaint1.delete();
+    outerPaint2.delete();
+    gradPaint1.delete();
+    gradPaint2.delete();
+    dstInPaint1.delete();
+    dstInPaint2.delete();
+    textPaint1.delete();
+    textPaint2.delete();
+    labelPaint.delete();
+    labelFont.delete();
+    font.delete();
+    blob.delete();
+}
+
+main();
+</script>
+</body>
+</html>

@@ -1409,6 +1409,110 @@
         return entry;
     }
 
+    // Detect form element types that have shadow DOM
+    function getFormElementInfo(element) {
+        const tag = element.tagName;
+        if (tag === 'INPUT') {
+            const type = element.type || 'text';
+            if (['text', 'email', 'password', 'search', 'tel', 'url'].includes(type)) {
+                return { type: 'text-control-single', inputType: type };
+            } else if (type === 'range') {
+                return { type: 'slider', inputType: type };
+            }
+        } else if (tag === 'TEXTAREA') {
+            return { type: 'text-control-multi' };
+        } else if (tag === 'SELECT') {
+            return { type: 'select' };
+        }
+        return null;
+    }
+
+    // Create shadow DOM children for text input controls
+    function createTextControlShadowChildren(element, parentId, depth, nodes, currentIdRef) {
+        const rect = element.getBoundingClientRect();
+        const style = getComputedStyle(element);
+        const childIds = [];
+
+        // Create LayoutTextControlInnerEditor
+        const editorId = currentIdRef.id++;
+        const editorEntry = {
+            id: editorId,
+            name: 'LayoutTextControlInnerEditor DIV',
+            z_index: 0,
+            is_stacking_context: false,
+            is_stacked: false,
+            has_layer: false,
+            computed_style: {
+                display: 'block',
+                position: 'static',
+                opacity: 1,
+                z_index: 0,
+                has_transform: false,
+                overflow_x: 'visible',
+                overflow_y: 'visible',
+                visibility: style.visibility,
+                has_filter: false,
+                has_backdrop_filter: false,
+                has_clip_path: false,
+                has_mask: false,
+                is_isolated: false,
+                has_will_change_transform: false,
+                has_will_change_opacity: false,
+                contain_paint: false,
+                contain_layout: false,
+                letter_spacing: parseFloat(style.letterSpacing) || 0,
+                word_spacing: parseFloat(style.wordSpacing) || 0,
+                font_size: parseFloat(style.fontSize),
+                font_family: style.fontFamily.split(',')[0].replace(/['"]/g, '').trim(),
+                font_weight: parseInt(style.fontWeight),
+                font_style: style.fontStyle
+            },
+            geometry: {
+                x: rect.x + window.scrollX + parseFloat(style.paddingLeft),
+                y: rect.y + window.scrollY + parseFloat(style.paddingTop),
+                width: rect.width - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight),
+                height: rect.height - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom)
+            },
+            padding: { top: 0, right: 0, bottom: 0, left: 0 },
+            margin: { top: 0, right: 0, bottom: 0, left: 0 },
+            depth: depth,
+            children: []
+        };
+        nodes.push(editorEntry);
+        childIds.push(editorId);
+
+        // Create LayoutText for placeholder or value
+        const text = element.value || element.placeholder || '';
+        if (text) {
+            const textId = currentIdRef.id++;
+            const textEntry = {
+                id: textId,
+                name: 'LayoutText #text',
+                z_index: 0,
+                is_stacking_context: false,
+                is_stacked: false,
+                has_layer: false,
+                computed_style: editorEntry.computed_style,
+                text: text,
+                fragments: [{
+                    x: editorEntry.geometry.x,
+                    y: editorEntry.geometry.y,
+                    width: editorEntry.geometry.width,
+                    height: parseFloat(style.lineHeight) || parseFloat(style.fontSize) * 1.2,
+                    start: 0,
+                    end: text.length,
+                    runs: [{ glyphs: null, positions: null }]
+                }],
+                depth: depth + 1,
+                children: []
+            };
+            nodes.push(textEntry);
+            editorEntry.children.push(textId);
+        }
+
+        return childIds;
+    }
+
     function getLayoutObjectName(node) {
         if (node.nodeType === Node.TEXT_NODE) {
             return 'LayoutText #text';
@@ -1418,6 +1522,20 @@
         // Special case for BR element
         if (tag === 'BR') {
             return 'LayoutBR BR';
+        }
+
+        // Special cases for form elements with shadow DOM
+        const formInfo = getFormElementInfo(node);
+        if (formInfo) {
+            if (formInfo.type === 'text-control-single') {
+                return 'LayoutTextControlSingleLine (inline) INPUT';
+            } else if (formInfo.type === 'text-control-multi') {
+                return 'LayoutTextControlMultiLine (inline) TEXTAREA';
+            } else if (formInfo.type === 'select') {
+                return 'LayoutFlexibleBox (inline) SELECT';
+            } else if (formInfo.type === 'slider') {
+                return 'LayoutFlexibleBox (inline) INPUT';
+            }
         }
 
         const style = getComputedStyle(node);
@@ -1615,6 +1733,7 @@
     // Create an anonymous block wrapper
     function createAnonymousBlock(id, parentElement, depth, inlineChildren) {
         const parentStyle = getComputedStyle(parentElement);
+        const parentRect = parentElement.getBoundingClientRect();
 
         // Calculate geometry from inline children
         let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -1636,6 +1755,14 @@
                 maxX = Math.max(maxX, rect.x + rect.width);
                 maxY = Math.max(maxY, rect.y + rect.height);
             }
+        }
+
+        // If no geometry found (e.g., all whitespace), use parent geometry
+        if (minX === Infinity) {
+            minX = parentRect.x;
+            minY = parentRect.y;
+            maxX = parentRect.x;
+            maxY = parentRect.y;
         }
 
         return {
@@ -1709,10 +1836,13 @@
             }
 
             if (isTextNode) {
+                entry.text = node.textContent;
                 const fragments = getTextFragments(node);
                 if (fragments.length > 0) {
-                    entry.text = node.textContent;
                     entry.fragments = fragments;
+                } else {
+                    // Whitespace text node - no visible geometry but still exists
+                    entry.fragments = [];
                 }
             } else {
                 entry.geometry = getGeometry(node);
@@ -1748,27 +1878,81 @@
                 const isFlexOrGrid = ['flex', 'inline-flex', 'grid', 'inline-grid'].includes(display);
                 const isBlock = ['block', 'flow-root'].includes(display);
 
+                // Check for form elements with shadow DOM
+                const formInfo = getFormElementInfo(node);
+                if (formInfo && (formInfo.type === 'text-control-single' || formInfo.type === 'text-control-multi')) {
+                    // Create shadow DOM children for text controls
+                    const currentIdRef = { id: currentId };
+                    const shadowChildIds = createTextControlShadowChildren(node, id, depth + 1, nodes, currentIdRef);
+                    currentId = currentIdRef.id;
+                    childIds.push(...shadowChildIds);
+                    entry.children = childIds;
+                    return id;
+                }
+
                 // Check for ::before pseudo-element
                 if (hasPseudoElement(node, '::before')) {
                     const beforeId = currentId++;
                     const beforeEntry = createPseudoElementNode(beforeId, node, '::before', depth + 1);
                     nodes.push(beforeEntry);
                     childIds.push(beforeId);
+
+                    // Create text fragment child for the pseudo-element content
+                    const textFragId = currentId++;
+                    const textFragEntry = {
+                        id: textFragId,
+                        name: 'LayoutTextFragment (anonymous)',
+                        z_index: 0,
+                        is_stacking_context: false,
+                        is_stacked: false,
+                        has_layer: false,
+                        computed_style: beforeEntry.computed_style,
+                        depth: depth + 2,
+                        children: []
+                    };
+                    nodes.push(textFragEntry);
+                    beforeEntry.children.push(textFragId);
                 }
 
                 // Collect valid children
-                const validChildren = [];
+                // Whitespace text nodes are only kept when between inline elements (not at boundaries)
+                const rawChildren = [];
                 for (const child of node.childNodes) {
                     if (child.nodeType === Node.ELEMENT_NODE) {
                         const tag = child.tagName.toLowerCase();
                         if (!['script', 'style', 'noscript'].includes(tag)) {
                             const childStyle = getComputedStyle(child);
                             if (childStyle.display !== 'none') {
-                                validChildren.push({ node: child, isText: false, isBlock: isBlockLevel(childStyle.display) });
+                                rawChildren.push({ node: child, isText: false, isBlock: isBlockLevel(childStyle.display), isWhitespace: false });
                             }
                         }
-                    } else if (child.nodeType === Node.TEXT_NODE && child.textContent.trim()) {
-                        validChildren.push({ node: child, isText: true, isBlock: false });
+                    } else if (child.nodeType === Node.TEXT_NODE) {
+                        if (child.textContent.trim()) {
+                            rawChildren.push({ node: child, isText: true, isBlock: false, isWhitespace: false });
+                        } else if (child.textContent.length > 0) {
+                            rawChildren.push({ node: child, isText: true, isBlock: false, isWhitespace: true });
+                        }
+                    }
+                }
+
+                // Filter: keep whitespace only when it's trailing after an inline element
+                // (Chromium keeps trailing whitespace after inline elements in anonymous blocks)
+                const validChildren = [];
+                for (let i = 0; i < rawChildren.length; i++) {
+                    const child = rawChildren[i];
+                    if (!child.isWhitespace) {
+                        validChildren.push(child);
+                    } else {
+                        // Check adjacent elements
+                        const prevNonWS = rawChildren.slice(0, i).reverse().find(c => !c.isWhitespace);
+                        const nextNonWS = rawChildren.slice(i + 1).find(c => !c.isWhitespace);
+                        // Keep whitespace if:
+                        // 1. It's after an inline element AND (followed by a block OR is last in run)
+                        const afterInline = prevNonWS && !prevNonWS.isBlock;
+                        const beforeBlockOrEnd = !nextNonWS || nextNonWS.isBlock;
+                        if (afterInline && beforeBlockOrEnd) {
+                            validChildren.push(child);
+                        }
                     }
                 }
 
@@ -1823,6 +2007,22 @@
                     const afterEntry = createPseudoElementNode(afterId, node, '::after', depth + 1);
                     nodes.push(afterEntry);
                     childIds.push(afterId);
+
+                    // Create text fragment child for the pseudo-element content
+                    const textFragId = currentId++;
+                    const textFragEntry = {
+                        id: textFragId,
+                        name: 'LayoutTextFragment (anonymous)',
+                        z_index: 0,
+                        is_stacking_context: false,
+                        is_stacked: false,
+                        has_layer: false,
+                        computed_style: afterEntry.computed_style,
+                        depth: depth + 2,
+                        children: []
+                    };
+                    nodes.push(textFragEntry);
+                    afterEntry.children.push(textFragId);
                 }
 
                 entry.children = childIds;

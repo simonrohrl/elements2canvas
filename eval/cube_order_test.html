@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>3D Cube Paint Order Test</title>
+    <style>
+        @font-face {
+            font-family: Arial;
+            src: url("../Arial.ttf");
+        }
+
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background: #f0f0f0;
+        }
+
+        .container {
+            display: flex;
+            gap: 40px;
+            align-items: flex-start;
+        }
+
+        .cube-container {
+            background: white;
+            padding: 40px;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+
+        .controls {
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            min-width: 300px;
+        }
+
+        h2 {
+            margin-top: 0;
+        }
+
+        .order-input {
+            width: 100%;
+            padding: 10px;
+            font-size: 16px;
+            font-family: monospace;
+            border: 2px solid #ddd;
+            border-radius: 6px;
+            margin-bottom: 10px;
+        }
+
+        .order-input:focus {
+            border-color: #3498db;
+            outline: none;
+        }
+
+        .hint {
+            font-size: 12px;
+            color: #666;
+            margin-bottom: 15px;
+        }
+
+        .preset-buttons {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-bottom: 15px;
+        }
+
+        .preset-btn {
+            padding: 8px 12px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            background: #ecf0f1;
+        }
+
+        .preset-btn:hover {
+            background: #bdc3c7;
+        }
+
+        .preset-btn.active {
+            background: #3498db;
+            color: white;
+        }
+
+        .face-legend {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 8px;
+            margin-top: 15px;
+            font-size: 13px;
+        }
+
+        .face-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .face-color {
+            width: 20px;
+            height: 20px;
+            border-radius: 4px;
+        }
+
+        /* 3D Cube Styles */
+        .preserve-3d-demo {
+            perspective: 500px;
+            perspective-origin: 50% 50%;
+            height: 200px;
+            width: 200px;
+        }
+
+        .cube-wrapper {
+            position: relative;
+            width: 120px;
+            height: 120px;
+            margin: 40px auto;
+            transform-style: preserve-3d;
+            transform: rotateX(-15deg) rotateY(25deg);
+        }
+
+        .cube-face {
+            position: absolute;
+            width: 120px;
+            height: 120px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            font-weight: bold;
+            color: white;
+        }
+
+        .cube-front { background: rgba(52, 152, 219, 0.9); transform: translateZ(60px); }
+        .cube-back { background: rgba(155, 89, 182, 0.9); transform: translateZ(-60px) rotateY(180deg); }
+        .cube-left { background: rgba(46, 204, 113, 0.9); transform: translateX(-60px) rotateY(-90deg); }
+        .cube-right { background: rgba(241, 196, 15, 0.9); transform: translateX(60px) rotateY(90deg); }
+        .cube-top { background: rgba(231, 76, 60, 0.9); transform: translateY(-60px) rotateX(90deg); }
+        .cube-bottom { background: rgba(52, 73, 94, 0.9); transform: translateY(60px) rotateX(-90deg); }
+
+        .info-box {
+            background: #f8f9fa;
+            padding: 12px;
+            border-radius: 6px;
+            margin-top: 15px;
+            font-size: 12px;
+        }
+
+        .info-box code {
+            background: #e9ecef;
+            padding: 2px 6px;
+            border-radius: 3px;
+        }
+    </style>
+</head>
+<body>
+    <h1>3D Cube Paint Order Test</h1>
+    <p>Experiment with different paint orders to see how they affect the 3D cube rendering.</p>
+
+    <div class="container">
+        <div class="cube-container">
+            <h2>Cube Preview</h2>
+            <div class="preserve-3d-demo">
+                <div class="cube-wrapper" id="cube">
+                    <!-- Faces will be inserted here dynamically -->
+                </div>
+            </div>
+        </div>
+
+        <div class="controls">
+            <h2>Paint Order</h2>
+            <input type="text" class="order-input" id="orderInput" value="F,B,L,R,T,Bo" placeholder="e.g., F,B,L,R,T,Bo">
+            <div class="hint">
+                Enter face order separated by commas. First = painted first (behind), Last = painted last (in front).
+            </div>
+
+            <h3>Presets</h3>
+            <div class="preset-buttons">
+                <button class="preset-btn" data-order="F,B,L,R,T,Bo">DOM Order</button>
+                <button class="preset-btn" data-order="Bo,T,R,L,B,F">Reverse DOM</button>
+                <button class="preset-btn" data-order="B,Bo,T,L,R,F">Back First</button>
+                <button class="preset-btn" data-order="B,L,Bo,T,R,F">Z-Sorted (approx)</button>
+            </div>
+
+            <h3>Face Legend</h3>
+            <div class="face-legend">
+                <div class="face-item">
+                    <div class="face-color" style="background: rgba(52, 152, 219, 0.9);"></div>
+                    <span><strong>F</strong> - Front (+Z)</span>
+                </div>
+                <div class="face-item">
+                    <div class="face-color" style="background: rgba(155, 89, 182, 0.9);"></div>
+                    <span><strong>B</strong> - Back (-Z)</span>
+                </div>
+                <div class="face-item">
+                    <div class="face-color" style="background: rgba(46, 204, 113, 0.9);"></div>
+                    <span><strong>L</strong> - Left (-X)</span>
+                </div>
+                <div class="face-item">
+                    <div class="face-color" style="background: rgba(241, 196, 15, 0.9);"></div>
+                    <span><strong>R</strong> - Right (+X)</span>
+                </div>
+                <div class="face-item">
+                    <div class="face-color" style="background: rgba(231, 76, 60, 0.9);"></div>
+                    <span><strong>T</strong> - Top (-Y)</span>
+                </div>
+                <div class="face-item">
+                    <div class="face-color" style="background: rgba(52, 73, 94, 0.9);"></div>
+                    <span><strong>Bo</strong> - Bottom (+Y)</span>
+                </div>
+            </div>
+
+            <div class="info-box">
+                <strong>How it works:</strong><br>
+                In CSS with <code>preserve-3d</code>, the browser automatically handles depth sorting.<br><br>
+                In our CanvasKit renderer, we paint faces in order - first face goes behind, last face goes in front.<br><br>
+                <strong>Current cube transform:</strong><br>
+                <code>rotateX(-15deg) rotateY(25deg)</code><br><br>
+                With this rotation, visible faces from viewer's perspective are: Front (F), Left (L), Top (T).
+            </div>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/canvaskit-wasm@0.39.1/bin/canvaskit.js"></script>
+    <script>
+        // Log what CanvasKit commands we WOULD use to render this cube
+        function logSkiaCommands() {
+            const cubeTransform = 'rotateX(-15deg) rotateY(25deg)';
+            const faces = [
+                { name: 'F', transform: 'translateZ(60px)', color: 'rgba(52, 152, 219, 0.9)' },
+                { name: 'B', transform: 'translateZ(-60px) rotateY(180deg)', color: 'rgba(155, 89, 182, 0.9)' },
+                { name: 'L', transform: 'translateX(-60px) rotateY(-90deg)', color: 'rgba(46, 204, 113, 0.9)' },
+                { name: 'R', transform: 'translateX(60px) rotateY(90deg)', color: 'rgba(241, 196, 15, 0.9)' },
+                { name: 'T', transform: 'translateY(-60px) rotateX(90deg)', color: 'rgba(231, 76, 60, 0.9)' },
+                { name: 'Bo', transform: 'translateY(60px) rotateX(-90deg)', color: 'rgba(52, 73, 94, 0.9)' },
+            ];
+
+            console.log('=== CSS 3D Cube Transform Analysis ===');
+            console.log('Parent transform:', cubeTransform);
+            console.log('');
+
+            faces.forEach((face, i) => {
+                console.log(`Face ${face.name}:`);
+                console.log(`  CSS transform: ${face.transform}`);
+                console.log(`  Color: ${face.color}`);
+            });
+        }
+
+        // Call on load
+        setTimeout(logSkiaCommands, 100);
+
+        const faceData = {
+            'F': { class: 'cube-front', label: 'F' },
+            'B': { class: 'cube-back', label: 'B' },
+            'L': { class: 'cube-left', label: 'L' },
+            'R': { class: 'cube-right', label: 'R' },
+            'T': { class: 'cube-top', label: 'T' },
+            'Bo': { class: 'cube-bottom', label: 'Bo' }
+        };
+
+        function renderCube(order) {
+            const cube = document.getElementById('cube');
+            cube.innerHTML = '';
+
+            const faces = order.split(',').map(f => f.trim().toUpperCase());
+
+            for (const face of faces) {
+                // Handle both 'BO' and 'Bo'
+                const faceKey = face === 'BO' ? 'Bo' : face;
+                const data = faceData[faceKey];
+                if (data) {
+                    const div = document.createElement('div');
+                    div.className = `cube-face ${data.class}`;
+                    div.textContent = data.label;
+                    cube.appendChild(div);
+                }
+            }
+        }
+
+        // Input handler
+        const orderInput = document.getElementById('orderInput');
+        orderInput.addEventListener('input', (e) => {
+            renderCube(e.target.value);
+            // Clear active state on presets
+            document.querySelectorAll('.preset-btn').forEach(btn => btn.classList.remove('active'));
+        });
+
+        // Preset buttons
+        document.querySelectorAll('.preset-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const order = btn.dataset.order;
+                orderInput.value = order;
+                renderCube(order);
+
+                // Update active state
+                document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+            });
+        });
+
+        // Initial render
+        renderCube(orderInput.value);
+    </script>
+</body>
+</html>

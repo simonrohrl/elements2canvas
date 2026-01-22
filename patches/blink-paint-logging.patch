@@ -1911,10 +1911,10 @@ index e043c1a98d..b1029efe0e 100644
    if (persistent_data_) {
 diff --git a/third_party/blink/renderer/platform/graphics/paint/property_tree_serializer.cc b/third_party/blink/renderer/platform/graphics/paint/property_tree_serializer.cc
 new file mode 100644
-index 0000000000..2384f3f010
+index 0000000000..509a35a0ca
 --- /dev/null
 +++ b/third_party/blink/renderer/platform/graphics/paint/property_tree_serializer.cc
-@@ -0,0 +1,248 @@
+@@ -0,0 +1,405 @@
 +// Copyright 2024 The Chromium Authors
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -1924,6 +1924,8 @@ index 0000000000..2384f3f010
 +#include <algorithm>
 +#include <vector>
 +
++#include "cc/paint/filter_operation.h"
++#include "third_party/blink/renderer/platform/graphics/compositor_filter_operations.h"
 +#include "third_party/blink/renderer/platform/json/json_values.h"
 +#include "third_party/blink/renderer/platform/geometry/path.h"
 +#include "third_party/skia/include/core/SkBlendMode.h"
@@ -2062,6 +2064,21 @@ index 0000000000..2384f3f010
 +      node_json->SetArray("matrix", SerializeTransformMatrix(node->Matrix()));
 +    }
 +
++    // Transform origin (CSS transform-origin)
++    const gfx::Point3F& origin = node->Origin();
++    if (origin.x() != 0 || origin.y() != 0 || origin.z() != 0) {
++      auto origin_array = std::make_unique<JSONArray>();
++      origin_array->PushDouble(origin.x());
++      origin_array->PushDouble(origin.y());
++      origin_array->PushDouble(origin.z());
++      node_json->SetArray("origin", std::move(origin_array));
++    }
++    
++    // Backface visibility (CSS backface-visibility: hidden)
++    if (node->IsBackfaceHidden()) {
++      node_json->SetBoolean("backface_hidden", true);
++    }
++
 +    nodes_array->PushObject(std::move(node_json));
 +  }
 +
@@ -2154,6 +2171,146 @@ index 0000000000..2384f3f010
 +
 +    // Blend mode
 +    node_json->SetString("blend_mode", SkBlendMode_Name(node->BlendMode()));
++
++      // Filter (CSS filter property)
++    if (const auto* filter = node->Filter()) {
++      const auto& cc_filter = filter->AsCcFilterOperations();
++      if (!cc_filter.IsEmpty()) {
++        auto filter_array = std::make_unique<JSONArray>();
++        for (const auto& op : cc_filter.operations()) {
++          auto op_json = std::make_unique<JSONObject>();
++          switch (op.type()) {
++            case cc::FilterOperation::BLUR:
++              op_json->SetString("type", "blur");
++              op_json->SetDouble("amount", op.amount());
++              break;
++            case cc::FilterOperation::GRAYSCALE:
++              op_json->SetString("type", "grayscale");
++              op_json->SetDouble("amount", op.amount());
++              break;
++            case cc::FilterOperation::SEPIA:
++              op_json->SetString("type", "sepia");
++              op_json->SetDouble("amount", op.amount());
++              break;
++            case cc::FilterOperation::SATURATE:
++              op_json->SetString("type", "saturate");
++              op_json->SetDouble("amount", op.amount());
++              break;
++            case cc::FilterOperation::HUE_ROTATE:
++              op_json->SetString("type", "hue_rotate");
++              op_json->SetDouble("amount", op.amount());
++              break;
++            case cc::FilterOperation::INVERT:
++              op_json->SetString("type", "invert");
++              op_json->SetDouble("amount", op.amount());
++              break;
++            case cc::FilterOperation::BRIGHTNESS:
++              op_json->SetString("type", "brightness");
++              op_json->SetDouble("amount", op.amount());
++              break;
++            case cc::FilterOperation::CONTRAST:
++              op_json->SetString("type", "contrast");
++              op_json->SetDouble("amount", op.amount());
++              break;
++            case cc::FilterOperation::OPACITY:
++              op_json->SetString("type", "opacity");
++              op_json->SetDouble("amount", op.amount());
++              break;
++            case cc::FilterOperation::DROP_SHADOW: {
++              op_json->SetString("type", "drop_shadow");
++              op_json->SetDouble("std_deviation", op.amount());
++              auto offset_array = std::make_unique<JSONArray>();
++              offset_array->PushDouble(op.offset().x());
++              offset_array->PushDouble(op.offset().y());
++              op_json->SetArray("offset", std::move(offset_array));
++              const auto& color = op.drop_shadow_color();
++              auto color_array = std::make_unique<JSONArray>();
++              color_array->PushDouble(color.fR);
++              color_array->PushDouble(color.fG);
++              color_array->PushDouble(color.fB);
++              color_array->PushDouble(color.fA);
++              op_json->SetArray("color", std::move(color_array));
++              break;
++            }
++            default:
++              op_json->SetString("type", "unknown");
++              break;
++          }
++          filter_array->PushObject(std::move(op_json));
++        }
++        node_json->SetArray("filter", std::move(filter_array));
++      }
++    }
++  
++    // Backdrop filter (CSS backdrop-filter property)
++    if (const auto* backdrop_filter = node->BackdropFilter()) {
++      const auto& cc_filter = backdrop_filter->AsCcFilterOperations();
++      if (!cc_filter.IsEmpty()) {
++        auto filter_array = std::make_unique<JSONArray>();
++        for (const auto& op : cc_filter.operations()) {
++          auto op_json = std::make_unique<JSONObject>();
++          switch (op.type()) {
++            case cc::FilterOperation::BLUR:
++              op_json->SetString("type", "blur");
++              op_json->SetDouble("amount", op.amount());
++              break;
++            case cc::FilterOperation::GRAYSCALE:
++              op_json->SetString("type", "grayscale");
++              op_json->SetDouble("amount", op.amount());
++              break;
++            case cc::FilterOperation::SEPIA:
++              op_json->SetString("type", "sepia");
++              op_json->SetDouble("amount", op.amount());
++              break;
++            case cc::FilterOperation::SATURATE:
++              op_json->SetString("type", "saturate");
++              op_json->SetDouble("amount", op.amount());
++              break;
++            case cc::FilterOperation::HUE_ROTATE:
++              op_json->SetString("type", "hue_rotate");
++              op_json->SetDouble("amount", op.amount());
++              break;
++            case cc::FilterOperation::INVERT:
++              op_json->SetString("type", "invert");
++              op_json->SetDouble("amount", op.amount());
++              break;
++            case cc::FilterOperation::BRIGHTNESS:
++              op_json->SetString("type", "brightness");
++              op_json->SetDouble("amount", op.amount());
++              break;
++            case cc::FilterOperation::CONTRAST:
++              op_json->SetString("type", "contrast");
++              op_json->SetDouble("amount", op.amount());
++              break;
++            case cc::FilterOperation::OPACITY:
++              op_json->SetString("type", "opacity");
++              op_json->SetDouble("amount", op.amount());
++              break;
++            case cc::FilterOperation::DROP_SHADOW: {
++              op_json->SetString("type", "drop_shadow");
++              op_json->SetDouble("std_deviation", op.amount());
++              auto offset_array = std::make_unique<JSONArray>();
++              offset_array->PushDouble(op.offset().x());
++              offset_array->PushDouble(op.offset().y());
++              op_json->SetArray("offset", std::move(offset_array));
++              const auto& color = op.drop_shadow_color();
++              auto color_array = std::make_unique<JSONArray>();
++              color_array->PushDouble(color.fR);
++              color_array->PushDouble(color.fG);
++              color_array->PushDouble(color.fB);
++              color_array->PushDouble(color.fA);
++              op_json->SetArray("color", std::move(color_array));
++              break;
++            }
++            default:
++              op_json->SetString("type", "unknown");
++              break;
++          }
++          filter_array->PushObject(std::move(op_json));
++        }
++        node_json->SetArray("backdrop_filter", std::move(filter_array));
++      }
++    }
 +
 +    nodes_array->PushObject(std::move(node_json));
 +  }

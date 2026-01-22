@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>CanvasKit Exact Paint Ops Test</title>
+  <script src="https://unpkg.com/canvaskit-wasm@0.39.1/bin/canvaskit.js"></script>
+</head>
+<body>
+  <h2>Exact recreation of raw_paint_ops.json gradient text sequence</h2>
+  <canvas id="canvas" width="600" height="150"></canvas>
+  <pre id="log"></pre>
+
+<script type="module">
+const log = (msg) => {
+    document.getElementById('log').textContent += msg + '\n';
+    console.log(msg);
+};
+
+async function main() {
+    log('Loading CanvasKit...');
+
+    const CanvasKit = await CanvasKitInit({
+        locateFile: (file) => `https://unpkg.com/canvaskit-wasm@0.39.1/bin/${file}`,
+    });
+
+    log('CanvasKit loaded');
+
+    // Load font
+    const fontResp = await fetch("Arial.ttf");
+    const fontData = await fontResp.arrayBuffer();
+    const typeface = CanvasKit.Typeface.MakeFreeTypeFaceFromData(fontData);
+    if (!typeface) {
+        log('ERROR: Failed to load font');
+        return;
+    }
+    log('Font loaded');
+
+    const surface = CanvasKit.MakeCanvasSurface('canvas');
+    const canvas = surface.getCanvas();
+    canvas.clear(CanvasKit.WHITE);
+
+    // ==========================================
+    // EXACT DATA FROM raw_paint_ops.json
+    // ==========================================
+
+    // Glyph IDs from Chromium (these map to "Gradient Fill Text" in Arial)
+    const chromiumGlyphIds = new Uint16Array([
+        42, 85, 68, 71, 76, 72, 81, 87, 3, 41, 76, 79, 79, 3, 55, 72, 91, 87
+    ]);
+
+    // Horizontal positions from Chromium
+    const chromiumPositions = [
+        0, 37.3359375, 53.3203125, 80.015625, 106.7109375, 117.375,
+        144.0703125, 170.765625, 184.1015625, 197.4375, 226.7578125,
+        237.421875, 248.0859375, 258.75, 271.21875, 295.21875, 321.9140625, 345.9140375
+    ];
+
+    // DrawTextBlobOp position
+    const textX = 16;
+    const textY = 60;
+
+    // Gradient data from raw_paint_ops.json
+    const gradientColors = [
+        CanvasKit.Color4f(0.400000005960465, 0.494117647409439, 0.917647063732147, 1),  // blue
+        CanvasKit.Color4f(0.462745100259781, 0.294117659330368, 0.635294139385223, 1),  // purple
+        CanvasKit.Color4f(0.941176474094391, 0.576470613479614, 0.984313726425171, 1)   // pink
+    ];
+    const gradientPositions = [0, 0.5, 1];
+    const gradientStart = [0, 0];
+    const gradientEnd = [2368, 0];  // From raw_paint_ops.json
+
+    // Font settings from raw_paint_ops.json
+    const fontSize = 48;
+    const font = new CanvasKit.Font(typeface, fontSize);
+    font.setSubpixel(true);
+    font.setEmbolden(true);  // embolden: true in raw_paint_ops
+
+    log('\n=== Creating RSXform array for MakeFromRSXformGlyphs ===');
+
+    // Create RSXform array: [scos, ssin, tx, ty] for each glyph
+    // POSITIONING_HORIZONTAL (1) means tx = positions[i], ty = 0
+    const rsxforms = new Float32Array(chromiumGlyphIds.length * 4);
+    for (let i = 0; i < chromiumGlyphIds.length; i++) {
+        rsxforms[i * 4]     = 1.0;  // scos = 1 (no rotation/scale)
+        rsxforms[i * 4 + 1] = 0.0;  // ssin = 0
+        rsxforms[i * 4 + 2] = chromiumPositions[i];  // tx = x position
+        rsxforms[i * 4 + 3] = 0;    // ty = 0 (horizontal positioning)
+    }
+
+    log(`RSXforms created: ${rsxforms.length / 4} transforms`);
+
+    // ==========================================
+    // REPLICATE THE EXACT PAINT OPS SEQUENCE
+    // ==========================================
+
+    log('\n=== Replicating paint ops sequence ===');
+
+    // ClipRectOp (clip to the gradient area)
+    canvas.save();
+    canvas.clipRect(CanvasKit.LTRBRect(16, 16, 584, 100), CanvasKit.ClipOp.Intersect, false);
+    log('1. ClipRect [16, 16, 584, 100]');
+
+    // SaveLayerOp (blendMode: 3 = SrcOver) - outer layer
+    const outerPaint = new CanvasKit.Paint();
+    outerPaint.setAlphaf(1);
+    canvas.saveLayer(outerPaint);
+    log('2. SaveLayer (SrcOver, alpha=1)');
+
+    // DrawRectOp with gradient shader
+    const shader = CanvasKit.Shader.MakeLinearGradient(
+        gradientStart, gradientEnd,
+        gradientColors, gradientPositions,
+        CanvasKit.TileMode.Clamp
+    );
+    const gradPaint = new CanvasKit.Paint();
+    gradPaint.setShader(shader);
+    gradPaint.setAntiAlias(true);
+    canvas.drawRect(CanvasKit.LTRBRect(16, 16, 584, 100), gradPaint);
+    log('3. DrawRect with gradient [16, 16, 584, 100]');
+
+    // SaveLayerOp (blendMode: 6 = DstIn) - DstIn layer for masking
+    const dstInPaint = new CanvasKit.Paint();
+    dstInPaint.setBlendMode(CanvasKit.BlendMode.DstIn);
+    dstInPaint.setAlphaf(1);
+    canvas.saveLayer(dstInPaint);
+    log(`4. SaveLayer (DstIn, blendMode=${CanvasKit.BlendMode.DstIn})`);
+
+    // DrawTextBlobOp with MakeFromRSXformGlyphs
+    const blob = CanvasKit.TextBlob.MakeFromRSXformGlyphs(chromiumGlyphIds, rsxforms, font);
+    if (!blob) {
+        log('ERROR: Failed to create TextBlob!');
+        return;
+    }
+    log('5. TextBlob created from RSXformGlyphs');
+
+    const textPaint = new CanvasKit.Paint();
+    textPaint.setColor(CanvasKit.Color4f(0, 0, 0, 1));  // Black with alpha 1
+    textPaint.setAntiAlias(true);
+    textPaint.setStyle(CanvasKit.PaintStyle.Fill);
+    canvas.drawTextBlob(blob, textX, textY, textPaint);
+    log(`6. DrawTextBlob at (${textX}, ${textY}) with black paint (a=1)`);
+
+    // RestoreOp - DstIn compositing
+    canvas.restore();
+    log('7. Restore (DstIn compositing happens here)');
+
+    // RestoreOp - SrcOver layer
+    canvas.restore();
+    log('8. Restore (SrcOver layer)');
+
+    // RestoreOp - clip
+    canvas.restore();
+    log('9. Restore (clip)');
+
+    surface.flush();
+
+    log('\n=== EXPECTED RESULT ===');
+    log('Text "Gradient Fill Text" with gradient fill (blue->purple->pink)');
+    log('\nIf you see NOTHING or BLACK, the issue is with MakeFromRSXformGlyphs + DstIn.');
+
+    // ==========================================
+    // COMPARISON: Use drawText instead
+    // ==========================================
+    log('\n\n=== COMPARISON: Same sequence with drawText ===');
+
+    // Draw comparison using drawText (offset down by 60 pixels)
+    canvas.save();
+    canvas.clipRect(CanvasKit.LTRBRect(16, 76, 584, 140), CanvasKit.ClipOp.Intersect, false);
+
+    const outerPaint2 = new CanvasKit.Paint();
+    outerPaint2.setAlphaf(1);
+    canvas.saveLayer(outerPaint2);
+
+    const shader2 = CanvasKit.Shader.MakeLinearGradient(
+        gradientStart, gradientEnd,
+        gradientColors, gradientPositions,
+        CanvasKit.TileMode.Clamp
+    );
+    const gradPaint2 = new CanvasKit.Paint();
+    gradPaint2.setShader(shader2);
+    gradPaint2.setAntiAlias(true);
+    canvas.drawRect(CanvasKit.LTRBRect(16, 76, 584, 140), gradPaint2);
+
+    const dstInPaint2 = new CanvasKit.Paint();
+    dstInPaint2.setBlendMode(CanvasKit.BlendMode.DstIn);
+    dstInPaint2.setAlphaf(1);
+    canvas.saveLayer(dstInPaint2);
+
+    const textPaint2 = new CanvasKit.Paint();
+    textPaint2.setColor(CanvasKit.Color4f(0, 0, 0, 1));
+    textPaint2.setAntiAlias(true);
+    // Use drawText instead of drawTextBlob
+    canvas.drawText("Gradient Fill Text", textX, textY + 60, textPaint2, font);
+
+    canvas.restore();
+    canvas.restore();
+    canvas.restore();
+
+    surface.flush();
+
+    log('Comparison row (drawText): Should show gradient text');
+
+    // Cleanup
+    outerPaint.delete();
+    outerPaint2.delete();
+    gradPaint.delete();
+    gradPaint2.delete();
+    dstInPaint.delete();
+    dstInPaint2.delete();
+    textPaint.delete();
+    textPaint2.delete();
+    font.delete();
+    blob.delete();
+}
+
+main();
+</script>
+</body>
+</html>

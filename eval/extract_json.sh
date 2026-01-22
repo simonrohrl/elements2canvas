@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Extract JSON data from chrome_debug.log
-# Extracts RAW_PAINT_OPS, LAYOUT_TREE, LAYER_TREE, STACKING_NODES, PROPERTY_TREES to JSON files
+# Extracts RAW_PAINT_OPS, LAYOUT_TREE, LAYER_TREE, STACKING_NODES, PROPERTY_TREES, SKIA_COMMANDS to JSON files
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -11,6 +11,7 @@ LAYOUT_TREE_FILE="$PROJECT_DIR/layout_tree.json"
 LAYER_TREE_FILE="$PROJECT_DIR/layer_tree.json"
 STACKING_NODES_FILE="$PROJECT_DIR/stacking_nodes.json"
 PROPERTY_TREES_FILE="$PROJECT_DIR/property_trees.json"
+SKIA_COMMANDS_FILE="$PROJECT_DIR/skia_commands.json"
 
 if [ ! -f "$LOG_FILE" ]; then
     echo "Error: $LOG_FILE not found"
@@ -18,10 +19,10 @@ if [ ! -f "$LOG_FILE" ]; then
 fi
 
 # delete files to start fresh
-rm -f "$RAW_PAINT_OPS_FILE" "$LAYOUT_TREE_FILE" "$LAYER_TREE_FILE" "$STACKING_NODES_FILE" "$PROPERTY_TREES_FILE"
+rm -f "$RAW_PAINT_OPS_FILE" "$LAYOUT_TREE_FILE" "$LAYER_TREE_FILE" "$STACKING_NODES_FILE" "$PROPERTY_TREES_FILE" "$SKIA_COMMANDS_FILE"
 echo "Deleted old files to start fresh"
 
-python3 - "$LOG_FILE" "$RAW_PAINT_OPS_FILE" "$LAYOUT_TREE_FILE" "$LAYER_TREE_FILE" "$STACKING_NODES_FILE" "$PROPERTY_TREES_FILE" << 'PYTHON_SCRIPT'
+python3 - "$LOG_FILE" "$RAW_PAINT_OPS_FILE" "$LAYOUT_TREE_FILE" "$LAYER_TREE_FILE" "$STACKING_NODES_FILE" "$PROPERTY_TREES_FILE" "$SKIA_COMMANDS_FILE" << 'PYTHON_SCRIPT'
 import json
 import sys
 
@@ -31,6 +32,7 @@ layout_tree_file = sys.argv[3]
 layer_tree_file = sys.argv[4]
 stacking_nodes_file = sys.argv[5]
 property_trees_file = sys.argv[6]
+skia_commands_file = sys.argv[7]
 
 with open(log_file, 'r', errors='ignore') as f:
     content = f.read()
@@ -134,4 +136,84 @@ if property_trees_start != -1:
         print(f"  Warning: Failed to parse PROPERTY_TREES JSON: {e}")
 else:
     print("  Warning: PROPERTY_TREES not found in log")
+
+# Extract SKIA_COMMANDS JSON (Skia canvas commands for debugging)
+# The format is: SKIA_COMMANDS: {"type":"chromium_skia_commands","version":1,"commands":[...]}
+# Each SKIA_COMMANDS entry is a separate tile - show each as a separate frame for debugging
+# Also create a "merged" frame that combines all tiles
+
+# Collect all SKIA_COMMANDS entries
+skia_entries = []  # list of command lists
+search_pos = 0
+tile_num = 0
+while True:
+    skia_start = content.find('SKIA_COMMANDS: ', search_pos)
+    if skia_start == -1:
+        break
+    json_start = skia_start + len('SKIA_COMMANDS: ')
+    line_end = content.find('\n', json_start)
+    if line_end == -1:
+        line_end = len(content)
+    skia_json_str = content[json_start:line_end].strip()
+    try:
+        data = json.loads(skia_json_str)
+        commands = data.get('commands', [])
+        if commands:
+            skia_entries.append((tile_num, len(commands), commands))
+            tile_num += 1
+    except json.JSONDecodeError as e:
+        print(f"  Warning: Failed to parse SKIA_COMMANDS at {skia_start}: {e}")
+    search_pos = line_end
+
+if skia_entries:
+    print(f"  Found {len(skia_entries)} SKIA_COMMANDS tiles:")
+    for tile_idx, cmd_count, _ in skia_entries:
+        print(f"    Tile {tile_idx}: {cmd_count} commands")
+
+    # Build frames array:
+    # - Frame 0: "merged" - all tiles combined
+    # - Frame 1+: individual tiles
+    all_frames = []
+
+    # First frame: merged (all tiles combined)
+    all_commands = []
+    for _, _, commands in skia_entries:
+        all_commands.extend(commands)
+    # Re-index merged commands
+    for idx, cmd in enumerate(all_commands):
+        cmd['index'] = idx
+    all_frames.append({
+        "frame": 0,
+        "label": "merged (all tiles)",
+        "command_count": len(all_commands),
+        "commands": all_commands
+    })
+
+    # Subsequent frames: individual tiles
+    for tile_idx, cmd_count, commands in skia_entries:
+        # Re-index commands within tile
+        indexed_commands = []
+        for idx, cmd in enumerate(commands):
+            cmd_copy = dict(cmd)  # copy to avoid modifying merged
+            cmd_copy['index'] = idx
+            indexed_commands.append(cmd_copy)
+        all_frames.append({
+            "frame": tile_idx + 1,
+            "label": f"tile {tile_idx}",
+            "command_count": cmd_count,
+            "commands": indexed_commands
+        })
+
+    skia_commands_data = {
+        "type": "chromium_skia_commands",
+        "version": 1,
+        "frame_count": len(all_frames),
+        "frames": all_frames
+    }
+
+    with open(skia_commands_file, 'w') as out:
+        json.dump(skia_commands_data, out, indent=3)
+    print(f"  Exported {len(all_frames)} frames (1 merged + {len(skia_entries)} tiles) -> {skia_commands_file}")
+else:
+    print("  Warning: No SKIA_COMMANDS found in log")
 PYTHON_SCRIPT

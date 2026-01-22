@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>CanvasKit DstIn Test</title>
+  <script src="https://unpkg.com/canvaskit-wasm@0.39.1/bin/canvaskit.js"></script>
+</head>
+<body>
+  <h2>CanvasKit saveLayer + DstIn Test</h2>
+  <canvas id="canvas" width="400" height="100"></canvas>
+  <pre id="log"></pre>
+
+<script type="module">
+const log = (msg) => {
+    document.getElementById('log').textContent += msg + '\n';
+    console.log(msg);
+};
+
+async function main() {
+    log('Loading CanvasKit...');
+
+    const CanvasKit = await CanvasKitInit({
+        locateFile: (file) => `https://unpkg.com/canvaskit-wasm@0.39.1/bin/${file}`,
+    });
+
+    log('CanvasKit loaded');
+    log(`BlendMode.DstIn = ${CanvasKit.BlendMode.DstIn}`);
+
+    // Load font
+    log('Loading Arial font...');
+    const fontResp = await fetch("Arial.ttf");
+    const fontData = await fontResp.arrayBuffer();
+    const typeface = CanvasKit.Typeface.MakeFreeTypeFaceFromData(fontData);
+    if (!typeface) {
+        log('ERROR: Failed to load font');
+        return;
+    }
+    log('Font loaded');
+
+    const surface = CanvasKit.MakeCanvasSurface('canvas');
+    const canvas = surface.getCanvas();
+    canvas.clear(CanvasKit.WHITE);
+
+    // Test: saveLayer with DstIn using TEXT as mask (like Chromium gradient text)
+    log('\n=== Test: saveLayer + DstIn with TEXT mask ===');
+
+    // Create text blob
+    const font = new CanvasKit.Font(typeface, 36);
+    const text = "Gradient Text";
+
+    // 1. Outer saveLayer (SrcOver - isolate the compositing)
+    const outerPaint = new CanvasKit.Paint();
+    canvas.saveLayer(outerPaint);
+    log('1. saveLayer (SrcOver)');
+
+    // 2. Draw gradient rect (destination for DstIn)
+    const gradientColors = [
+        CanvasKit.Color4f(0.4, 0.494, 0.918, 1.0),   // blue
+        CanvasKit.Color4f(0.463, 0.294, 0.635, 1.0), // purple
+        CanvasKit.Color4f(0.941, 0.576, 0.984, 1.0)  // pink
+    ];
+    const shader = CanvasKit.Shader.MakeLinearGradient(
+        [20, 50], [380, 50],
+        gradientColors,
+        [0, 0.5, 1],
+        CanvasKit.TileMode.Clamp
+    );
+
+    const gradPaint = new CanvasKit.Paint();
+    gradPaint.setShader(shader);
+    gradPaint.setAntiAlias(true);
+    canvas.drawRect(CanvasKit.LTRBRect(20, 20, 380, 80), gradPaint);
+    log('2. drawRect with gradient');
+
+    // 3. SaveLayer with DstIn blend mode
+    const dstInPaint = new CanvasKit.Paint();
+    dstInPaint.setBlendMode(CanvasKit.BlendMode.DstIn);
+    canvas.saveLayer(dstInPaint);
+    log(`3. saveLayer (DstIn, blendMode=${CanvasKit.BlendMode.DstIn})`);
+
+    // 4. Draw text as mask (black text - alpha matters for DstIn)
+    const textPaint = new CanvasKit.Paint();
+    textPaint.setColor(CanvasKit.BLACK);
+    textPaint.setAntiAlias(true);
+    canvas.drawText(text, 50, 60, textPaint, font);
+    log('4. drawText (black text as mask)');
+
+    // 5. Restore DstIn layer
+    canvas.restore();
+    log('5. restore (DstIn compositing)');
+
+    // 6. Restore outer layer
+    canvas.restore();
+    log('6. restore (SrcOver)');
+
+    surface.flush();
+
+    log('\n=== EXPECTED ===');
+    log('Text "Gradient Text" with gradient fill (blue->purple->pink)');
+    log('White background elsewhere');
+    log('\nIf you see BLACK text, DstIn with text is not working.');
+
+    // Cleanup
+    outerPaint.delete();
+    gradPaint.delete();
+    dstInPaint.delete();
+    textPaint.delete();
+    font.delete();
+}
+
+main();
+</script>
+</body>
+</html>

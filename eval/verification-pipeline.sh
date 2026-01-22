@@ -10,7 +10,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # Duration to run browser (in seconds)
-BROWSER_DURATION=${1:-8}
+BROWSER_DURATION=${1:-10}
 
 echo "=== Paint Verification Pipeline ==="
 echo ""

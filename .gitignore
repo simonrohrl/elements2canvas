@@ -1,4 +1,5 @@
 depot_tools/
-chromium/
 backup.patch
 output
+skia/
+chromium/
