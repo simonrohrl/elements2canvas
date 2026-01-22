@@ -1,0 +1,1830 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Raw Paint Ops Visualizer (No Chunks)</title>
+  <script src="https://unpkg.com/canvaskit-wasm@0.39.1/bin/canvaskit.js"></script>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; flex-direction: column; align-items: center; padding: 20px; background: #f0f2f5; margin: 0; }
+    h2 { color: #1a1a1a; margin-bottom: 5px; }
+    .subtitle { color: #666; margin-bottom: 20px; font-size: 0.9em; }
+    #canvas-container { box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06); border-radius: 8px; overflow: hidden; background: white; }
+    canvas { display: block; }
+    .controls { margin: 20px; display: flex; align-items: center; gap: 15px; background: white; padding: 10px 20px; border-radius: 50px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+    .layer-info { margin-top: 20px; background: white; padding: 20px; border-radius: 8px; font-size: 13px; width: 100%; max-width: 800px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    .layer-info h3 { margin-top: 0; border-bottom: 1px solid #eee; padding-bottom: 10px; }
+    pre { background: #f8f9fa; padding: 10px; border-radius: 4px; overflow-x: auto; white-space: pre-wrap; font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; max-height: 400px; overflow-y: auto; }
+    .error { color: #d32f2f; background: #ffebee; padding: 10px; border-radius: 4px; }
+    .badge { display: inline-block; background: #e8f5e9; color: #2e7d32; padding: 2px 8px; border-radius: 4px; font-size: 0.8em; margin-left: 10px; }
+  </style>
+</head>
+<body>
+  <h2>Raw Paint Ops Visualizer <span class="badge">No Chunks</span></h2>
+  <div class="subtitle">Rendering paint ops from raw_paint_ops.json (flat list with inline property tree IDs)</div>
+
+  <div id="canvas-container">
+    <canvas id="skcanvas" width="2000" height="20000"></canvas>
+  </div>
+
+  <div class="controls">
+    <label><input type="checkbox" id="chkDebug"> Debug Mode</label>
+  </div>
+
+  <div class="layer-info">
+    <h3>Status Log</h3>
+    <pre id="status">Initializing CanvasKit...</pre>
+    <h3>Paint Ops Summary</h3>
+    <pre id="layerList">Waiting for data...</pre>
+  </div>
+
+<script type="module">
+// ============================================
+// Property Trees Parser
+// ============================================
+
+class PropertyTrees {
+    constructor(data, CanvasKit) {
+        this.CK = CanvasKit;
+        this.transformNodes = new Map();
+        this.effectNodes = new Map();
+        this.clipNodes = new Map();
+
+        if (data.transform_tree && data.transform_tree.nodes) {
+            data.transform_tree.nodes.forEach(n => this.transformNodes.set(n.id, n));
+        }
+        if (data.effect_tree && data.effect_tree.nodes) {
+            data.effect_tree.nodes.forEach(n => this.effectNodes.set(n.id, n));
+        }
+        if (data.clip_tree && data.clip_tree.nodes) {
+            data.clip_tree.nodes.forEach(n => this.clipNodes.set(n.id, n));
+        }
+    }
+
+    // Get accumulated transform matrix for a given node ID
+    getTransformMatrix(nodeId) {
+        let chain = [];
+        let currentId = nodeId;
+
+        while(currentId !== -1 && this.transformNodes.has(currentId)) {
+            chain.push(this.transformNodes.get(currentId));
+            currentId = chain[chain.length-1].parent_id;
+        }
+
+        let result = this.CK.M44.identity();
+
+        // Apply transformations Root -> Leaf
+        for (let i = chain.length - 1; i >= 0; i--) {
+            const node = chain[i];
+
+            if (node.matrix && node.matrix.length === 16) {
+                // Apply transform-origin if present
+                // Transform with origin: translate(+origin) * matrix * translate(-origin)
+                if (node.origin && node.origin.length >= 2) {
+                    const ox = node.origin[0];
+                    const oy = node.origin[1];
+                    const oz = node.origin[2] || 0;
+
+                    // translate(+origin)
+                    result = this.CK.M44.multiply(result, this.CK.M44.translated([ox, oy, oz]));
+                    // apply matrix
+                    result = this.CK.M44.multiply(result, node.matrix);
+                    // translate(-origin)
+                    result = this.CK.M44.multiply(result, this.CK.M44.translated([-ox, -oy, -oz]));
+                } else {
+                    result = this.CK.M44.multiply(result, node.matrix);
+                }
+            }
+            else if (node.local && node.local.length === 16) {
+                // Apply transform-origin if present
+                if (node.origin && node.origin.length >= 2) {
+                    const ox = node.origin[0];
+                    const oy = node.origin[1];
+                    const oz = node.origin[2] || 0;
+
+                    result = this.CK.M44.multiply(result, this.CK.M44.translated([ox, oy, oz]));
+                    result = this.CK.M44.multiply(result, node.local);
+                    result = this.CK.M44.multiply(result, this.CK.M44.translated([-ox, -oy, -oz]));
+                } else {
+                    result = this.CK.M44.multiply(result, node.local);
+                }
+            }
+            else if (node.translation2d && node.translation2d.length === 2) {
+                const tx = node.translation2d[0];
+                const ty = node.translation2d[1];
+                const translateMatrix = [
+                    1, 0, 0, tx,
+                    0, 1, 0, ty,
+                    0, 0, 1, 0,
+                    0, 0, 0, 1
+                ];
+                result = this.CK.M44.multiply(result, translateMatrix);
+            }
+        }
+        return result;
+    }
+
+    getEffect(index) {
+        return this.effectNodes.get(index) || { opacity: 1.0, blend_mode: 'SrcOver' };
+    }
+
+    getClip(index) {
+        return this.clipNodes.get(index) || null;
+    }
+
+    // Check if ancestorId is an ancestor of descendantId in the transform tree
+    isTransformAncestor(ancestorId, descendantId) {
+        if (ancestorId === descendantId) return false;
+        let currentId = descendantId;
+        while (currentId !== -1 && this.transformNodes.has(currentId)) {
+            const node = this.transformNodes.get(currentId);
+            if (node.parent_id === ancestorId) {
+                return true;
+            }
+            currentId = node.parent_id;
+        }
+        return false;
+    }
+
+    // Check if backface-visibility: hidden is set for any node in the transform chain
+    hasBackfaceHidden(nodeId) {
+        let currentId = nodeId;
+        while (currentId !== -1 && this.transformNodes.has(currentId)) {
+            const node = this.transformNodes.get(currentId);
+            if (node.backface_hidden) {
+                return true;
+            }
+            currentId = node.parent_id;
+        }
+        return false;
+    }
+
+    // Check if the back face is currently visible (facing the viewer)
+    // Returns true if the element should be culled (back face visible + backface_hidden)
+    shouldCullBackface(nodeId, matrix) {
+        if (!this.hasBackfaceHidden(nodeId)) {
+            return false;
+        }
+
+        // Check if the back face is facing the viewer by transforming the normal vector (0, 0, 1)
+        // and checking if Z component is negative (pointing away from viewer)
+        //
+        // For a 4x4 matrix in row-major format:
+        // The Z component of the transformed normal is determined by the 3rd row
+        // Specifically, for normal (0, 0, 1), the transformed Z = m[8]*0 + m[9]*0 + m[10]*1 = m[10]
+        //
+        // If m[10] < 0, the front face normal is pointing away from the viewer,
+        // meaning the back face is visible
+        const m = matrix;
+        if (m && m.length === 16) {
+            // m[10] is the z-scale component (row 2, col 2 in row-major)
+            // If negative, the element is flipped and showing its back
+            return m[10] < 0;
+        }
+        return false;
+    }
+}
+
+// ============================================
+// Paint Op Renderer
+// ============================================
+
+class PaintOpRenderer {
+    constructor(canvasKit, fontMgr) {
+        this.ck = canvasKit;
+        this.fontMgr = fontMgr;
+        this.debug = false;
+        this.opLog = [];
+        this._bgClipLayerDepth = 0;  // Track when we're inside a DstIn layer (for background-clip: text)
+    }
+
+    log(msg) {
+        this.opLog.push(msg);
+    }
+
+    // Apply shadow/looper effect - draws the shape multiple times for each shadow layer
+    // Returns: 'shadow_only' if this is a shadow-only draw (don't draw normal shape),
+    //          'shadow_with_content' if shadows were applied but content should also be drawn,
+    //          false if no shadows
+    applyShadows(canvas, op, drawFn) {
+        if (!op.flags || !op.flags.shadows || op.flags.shadows.length === 0) {
+            return false;
+        }
+
+        // DrawLooper applies layers in reverse order (bottom to top)
+        // The last layer in the array typically has kDontModifyPaintFlag set,
+        // meaning it's the actual shape (drawn normally after shadows)
+        const shadows = op.flags.shadows;
+
+        // Check if there's a "draw unmodified" layer (flags & 4)
+        // If not, and the op's color is black, this is a shadow-only draw
+        // (Chromium draws box-shadows as BLACK with a DrawLooper that transforms to shadow color)
+        const hasUnmodifiedLayer = shadows.some(s => s.flags & 4);
+        const opColor = op.flags;
+        const isBlackFill = opColor && opColor.r === 0 && opColor.g === 0 && opColor.b === 0;
+        const isShadowOnlyDraw = !hasUnmodifiedLayer && isBlackFill;
+
+        if (this.debug) {
+            this.log(`applyShadows: hasUnmodifiedLayer=${hasUnmodifiedLayer}, isBlackFill=${isBlackFill}, isShadowOnlyDraw=${isShadowOnlyDraw}`);
+            this.log(`  op.flags: r=${opColor?.r}, g=${opColor?.g}, b=${opColor?.b}, a=${opColor?.a}`);
+            shadows.forEach((s, i) => {
+                this.log(`  shadow[${i}]: flags=${s.flags}, color=(${s.r},${s.g},${s.b},${s.a}), blur=${s.blurSigma}, offset=(${s.offsetX},${s.offsetY})`);
+            });
+        }
+
+        for (let i = shadows.length - 1; i >= 0; i--) {
+            const shadow = shadows[i];
+
+            // kDontModifyPaintFlag (1 << 2 = 4) means don't modify paint, just translate
+            // This is typically the "original" draw, skip it here - we'll draw it normally
+            if (shadow.flags & 4) {
+                continue;
+            }
+
+            canvas.save();
+
+            // Apply offset - kPostTransformFlag (1 << 0 = 1) affects how offset is applied
+            const postTransform = shadow.flags & 1;
+            if (!postTransform) {
+                canvas.translate(shadow.offsetX, shadow.offsetY);
+            }
+
+            // Create shadow paint
+            const shadowPaint = new this.ck.Paint();
+            shadowPaint.setAntiAlias(true);
+            shadowPaint.setColor(this.ck.Color4f(
+                shadow.r || 0,
+                shadow.g || 0,
+                shadow.b || 0,
+                shadow.a || 1
+            ));
+            shadowPaint.setStyle(this.ck.PaintStyle.Fill);
+
+            // Apply blur if present
+            if (shadow.blurSigma > 0) {
+                const blurFilter = this.ck.MaskFilter.MakeBlur(
+                    this.ck.BlurStyle.Normal,
+                    shadow.blurSigma,
+                    !postTransform  // respectCTM
+                );
+                shadowPaint.setMaskFilter(blurFilter);
+            }
+
+            // kOverrideAlphaFlag (1 << 1 = 2) - this flag means to ignore the original paint's alpha
+            // and use full opacity for the shadow color itself. The shadow color already has its own alpha.
+            // We should NOT override the shadow color's alpha - just ensure we're not multiplying
+            // by an additional alpha from the original paint.
+            // So we don't need to do anything special here - the shadow color's alpha is already set.
+
+            if (postTransform) {
+                canvas.translate(shadow.offsetX, shadow.offsetY);
+            }
+
+            // Draw the shadow shape
+            drawFn(canvas, shadowPaint);
+
+            shadowPaint.delete();
+            canvas.restore();
+        }
+
+        return isShadowOnlyDraw ? 'shadow_only' : 'shadow_with_content';
+    }
+
+    renderOp(canvas, op) {
+        if (!op || !op.type) return;
+
+        switch (op.type) {
+            case 'SaveOp':
+                canvas.save();
+                break;
+
+            case 'RestoreOp':
+                canvas.restore();
+                // Log all RestoreOp to debug background-clip layer structure
+                console.log(`[BG-CLIP] RestoreOp`);
+                if (this._bgClipLayerDepth > 0) {
+                    this._bgClipLayerDepth--;
+                }
+                break;
+
+            case 'TranslateOp':
+                canvas.translate(op.dx || 0, op.dy || 0);
+                if (this.debug) this.log(`Translate(${op.dx}, ${op.dy})`);
+                break;
+
+            case 'ScaleOp':
+                canvas.scale(op.sx || 1, op.sy || 1);
+                if (this.debug) this.log(`Scale(${op.sx}, ${op.sy})`);
+                break;
+
+            case 'RotateOp':
+                canvas.rotate(op.degrees || 0, 0, 0);
+                if (this.debug) this.log(`Rotate(${op.degrees})`);
+                break;
+
+            case 'ConcatOp':
+            case 'SetMatrixOp':
+                if (op.matrix && op.matrix.length === 16) {
+                    canvas.concat(op.matrix);
+                }
+                break;
+
+            case 'ClipRectOp':
+                if (op.rect && op.rect.length === 4) {
+                    const rect = this.ck.LTRBRect(op.rect[0], op.rect[1], op.rect[2], op.rect[3]);
+                    // clipOp: 0 = Difference (clip OUT), 1 = Intersect (clip IN)
+                    const clipOp = op.clipOp === 0 ? this.ck.ClipOp.Difference : this.ck.ClipOp.Intersect;
+                    canvas.clipRect(rect, clipOp, op.antiAlias !== false);
+                    if (this.debug && op.clipOp === 0) {
+                        this.log(`ClipRect [${op.rect.join(', ')}] DIFFERENCE (clip out)`);
+                    }
+                }
+                break;
+
+            case 'ClipRRectOp':
+                if (op.rect && op.radii) {
+                    const rect = this.ck.LTRBRect(op.rect[0], op.rect[1], op.rect[2], op.rect[3]);
+                    const rrect = this.ck.RRectXY(rect, op.radii[0] || 0, op.radii[1] || 0);
+                    // clipOp: 0 = Difference (clip OUT), 1 = Intersect (clip IN)
+                    const clipOp = op.clipOp === 0 ? this.ck.ClipOp.Difference : this.ck.ClipOp.Intersect;
+                    canvas.clipRRect(rrect, clipOp, op.antiAlias !== false);
+                    if (this.debug && op.clipOp === 0) {
+                        this.log(`ClipRRect [${op.rect.join(', ')}] DIFFERENCE (clip out)`);
+                    }
+                }
+                break;
+
+            case 'ClipPathOp':
+                if (op.path) {
+                    const path = this.ck.Path.MakeFromSVGString(op.path);
+                    if (path) {
+                        // clipOp: 0 = Difference (clip OUT), 1 = Intersect (clip IN)
+                        // Default to Intersect if clipOp is not specified (undefined)
+                        const clipOp = op.clipOp === 0 ? this.ck.ClipOp.Difference : this.ck.ClipOp.Intersect;
+                        canvas.clipPath(path, clipOp, op.antiAlias !== false);
+                        if (this.debug) {
+                            this.log(`ClipPath ${op.clipOp === 0 ? 'DIFFERENCE' : 'INTERSECT'}`);
+                        }
+                        path.delete();
+                    }
+                }
+                break;
+
+            case 'DrawRectOp':
+                this.drawRect(canvas, op);
+                break;
+
+            case 'DrawRRectOp':
+                this.drawRRect(canvas, op);
+                break;
+
+            case 'DrawDRRectOp':
+                this.drawDRRect(canvas, op);
+                break;
+
+            case 'DrawColorOp':
+                if (op.r !== undefined) {
+                    const color = this.ck.Color4f(op.r, op.g, op.b, op.a || 1);
+                    canvas.drawColorInt(color, this.ck.BlendMode.SrcOver);
+                }
+                break;
+
+            case 'DrawLineOp':
+                this.drawLine(canvas, op);
+                break;
+
+            case 'DrawTextBlobOp':
+                this.drawTextBlob(canvas, op);
+                break;
+
+            case 'DrawRecordOp':
+                if (op.record && Array.isArray(op.record)) {
+                    for (const subOp of op.record) {
+                        this.renderOp(canvas, subOp);
+                    }
+                }
+                break;
+
+            case 'DrawPathOp':
+                this.drawPath(canvas, op);
+                break;
+
+            case 'DrawImageRectOp':
+                if (this.debug) this.log('DrawImageRectOp (skipped - no image data)');
+                break;
+
+            case 'SaveLayerOp':
+                this.saveLayer(canvas, op);
+                break;
+
+            case 'SaveLayerAlphaOp':
+                {
+                    const paint = new this.ck.Paint();
+                    paint.setAlphaf(op.alpha !== undefined ? op.alpha : 1);
+
+                    if (op.bounds && op.bounds.length === 4 && op.bounds[0] !== null) {
+                        const bounds = this.ck.LTRBRect(op.bounds[0], op.bounds[1], op.bounds[2], op.bounds[3]);
+                        canvas.saveLayer(paint, bounds);
+                    } else {
+                        canvas.saveLayer(paint);
+                    }
+                    paint.delete();
+                }
+                break;
+
+            case 'NoopOp':
+                break;
+
+            default:
+                if (this.debug) this.log(`Unknown op: ${op.type}`);
+        }
+    }
+
+    drawRect(canvas, op) {
+        if (!op.rect || op.rect.length !== 4) return;
+
+        const rect = this.ck.LTRBRect(op.rect[0], op.rect[1], op.rect[2], op.rect[3]);
+
+        // Draw shadows first if present
+        const shadowResult = this.applyShadows(canvas, op, (c, p) => {
+            c.drawRect(rect, p);
+        });
+
+        // If this is a shadow-only draw (Chromium box-shadow), don't draw the normal shape
+        // The shadow was drawn with BLACK fill + DrawLooper that transforms to shadow color
+        if (shadowResult === 'shadow_only') {
+            if (this.debug) {
+                this.log(`DrawRect [${op.rect.join(', ')}] (shadow-only)`);
+            }
+            return;
+        }
+
+        const paint = new this.ck.Paint();
+        paint.setAntiAlias(true);
+
+        if (op.flags && op.flags.shaderType === 'kPaintRecord' && op.flags.tileRecord) {
+            // Paint record shader - used for tiled patterns and background-clip: text
+            // Log only if we might be in a background-clip context (check tileRecord for gradient)
+            const hasGradientTile = op.flags.tileRecord.some(t => t.flags?.shaderType?.includes('Gradient'));
+            if (hasGradientTile) {
+                console.log(`[BG-CLIP] DrawRectOp with kPaintRecord (gradient tile): rect=[${op.rect.join(', ')}]`);
+            }
+            this.drawTiledPattern(canvas, op, rect, hasGradientTile);
+            paint.delete();
+            return;
+        } else if (op.flags && op.flags.shaderType === 'other' && op.flags.hasShader) {
+            // Unknown shader type without data - skip rendering to avoid black rectangles
+            // This happens with older captures that didn't serialize the shader content
+            if (this.debug) {
+                this.log(`DrawRect [${op.rect.join(', ')}] skipped (unknown shader without data)`);
+            }
+            paint.delete();
+            return;
+        } else if (op.flags && op.flags.shaderType && op.flags.gradientColors) {
+            const colors = op.flags.gradientColors.map(c =>
+                this.ck.Color4f(c.r || 0, c.g || 0, c.b || 0, c.a ?? 1)
+            );
+            const positions = op.flags.gradientPositions || null;
+
+            if (op.flags.shaderType === 'kLinearGradient' || op.flags.shaderType === 'LinearGradient') {
+                let startPt = op.flags.startPoint || [0, 0];
+                let endPt = op.flags.endPoint || [op.rect[2] - op.rect[0], op.rect[3] - op.rect[1]];
+
+                // Check if gradient coordinates are in local rect space
+                // and need to be translated to canvas coordinates.
+                // Heuristic: if gradient Y coords are far from rect Y (by more than rect height),
+                // the gradient is likely in local space.
+                const rectX = op.rect[0];
+                const rectY = op.rect[1];
+                const rectHeight = op.rect[3] - op.rect[1];
+                const gradientFarFromRect = Math.abs(startPt[1] - rectY) > rectHeight * 2;
+
+                if (gradientFarFromRect) {
+                    // Gradient is in local space - translate to canvas coords
+                    startPt = [startPt[0] + rectX, startPt[1] + rectY];
+                    endPt = [endPt[0] + rectX, endPt[1] + rectY];
+                }
+
+                const shader = this.ck.Shader.MakeLinearGradient(
+                    startPt, endPt, colors, positions, this.ck.TileMode.Clamp
+                );
+                paint.setShader(shader);
+            } else if (op.flags.shaderType === 'kRadialGradient' || op.flags.shaderType === 'RadialGradient') {
+                const center = op.flags.center || [
+                    (op.rect[0] + op.rect[2]) / 2,
+                    (op.rect[1] + op.rect[3]) / 2
+                ];
+                const radius = op.flags.radius || Math.max(
+                    op.rect[2] - op.rect[0],
+                    op.rect[3] - op.rect[1]
+                ) / 2;
+                const shader = this.ck.Shader.MakeRadialGradient(
+                    center, radius, colors, positions, this.ck.TileMode.Clamp
+                );
+                paint.setShader(shader);
+            }
+        } else if (op.flags) {
+            const c = op.flags;
+            paint.setColor(this.ck.Color4f(c.r || 0, c.g || 0, c.b || 0, c.a ?? 1));
+        } else {
+            paint.setColor(this.ck.Color4f(0.5, 0.5, 0.5, 1));
+        }
+
+        // Check for stroke style (style: 1 = Stroke, style: 0 = Fill)
+        if (op.flags && op.flags.style === 1) {
+            paint.setStyle(this.ck.PaintStyle.Stroke);
+            paint.setStrokeWidth(op.flags.strokeWidth || 1);
+
+            // Apply dash pattern if present (for dotted/dashed outlines)
+            if (op.flags.dashPattern && op.flags.dashPattern.intervals && op.flags.dashPattern.intervals.length > 0) {
+                const intervals = new Float32Array(op.flags.dashPattern.intervals);
+                const phase = op.flags.dashPattern.phase || 0;
+                const pathEffect = this.ck.PathEffect.MakeDash(intervals, phase);
+                if (pathEffect) {
+                    paint.setPathEffect(pathEffect);
+                }
+            }
+        } else {
+            paint.setStyle(this.ck.PaintStyle.Fill);
+        }
+
+        canvas.drawRect(rect, paint);
+
+        if (this.debug) {
+            const shaderInfo = op.flags?.shaderType ? ` shader=${op.flags.shaderType}` : '';
+            const shadowInfo = op.flags?.shadows ? ` shadows=${op.flags.shadows.length}` : '';
+            this.log(`DrawRect [${op.rect.join(', ')}]${shaderInfo}${shadowInfo}`);
+        }
+
+        paint.delete();
+    }
+
+    drawRRect(canvas, op) {
+        if (!op.rect) return;
+
+        const rect = this.ck.LTRBRect(op.rect[0], op.rect[1], op.rect[2], op.rect[3]);
+        const rx = op.radii ? op.radii[0] : 0;
+        const ry = op.radii ? op.radii[1] : 0;
+        const rrect = this.ck.RRectXY(rect, rx, ry);
+
+        // Draw shadows first if present
+        const shadowResult = this.applyShadows(canvas, op, (c, p) => {
+            c.drawRRect(rrect, p);
+        });
+
+        // If this is a shadow-only draw (Chromium box-shadow), don't draw the normal shape
+        // The shadow was drawn with BLACK fill + DrawLooper that transforms to shadow color
+        if (shadowResult === 'shadow_only') {
+            if (this.debug) {
+                this.log(`DrawRRect [${op.rect.join(', ')}] (shadow-only)`);
+            }
+            return;
+        }
+
+        const paint = new this.ck.Paint();
+        paint.setAntiAlias(true);
+
+        if (op.flags && op.flags.shaderType && op.flags.gradientColors) {
+            const colors = op.flags.gradientColors.map(c =>
+                this.ck.Color4f(c.r || 0, c.g || 0, c.b || 0, c.a ?? 1)
+            );
+            const positions = op.flags.gradientPositions || null;
+
+            if (op.flags.shaderType === 'kLinearGradient' || op.flags.shaderType === 'LinearGradient') {
+                let startPt = op.flags.startPoint || [op.rect[0], op.rect[1]];
+                let endPt = op.flags.endPoint || [op.rect[2], op.rect[3]];
+
+                // Check if gradient coordinates are in local rect space
+                // and need to be translated to canvas coordinates.
+                // Heuristic: if gradient Y coords are far from rect Y (by more than rect height),
+                // the gradient is likely in local space.
+                const rectX = op.rect[0];
+                const rectY = op.rect[1];
+                const rectHeight = op.rect[3] - op.rect[1];
+                const gradientFarFromRect = Math.abs(startPt[1] - rectY) > rectHeight * 2;
+
+                if (gradientFarFromRect) {
+                    // Gradient is in local space - translate to canvas coords
+                    startPt = [startPt[0] + rectX, startPt[1] + rectY];
+                    endPt = [endPt[0] + rectX, endPt[1] + rectY];
+                }
+
+                const shader = this.ck.Shader.MakeLinearGradient(
+                    startPt, endPt, colors, positions, this.ck.TileMode.Clamp
+                );
+                paint.setShader(shader);
+            } else if (op.flags.shaderType === 'kRadialGradient' || op.flags.shaderType === 'RadialGradient') {
+                const center = op.flags.center || [
+                    (op.rect[0] + op.rect[2]) / 2,
+                    (op.rect[1] + op.rect[3]) / 2
+                ];
+                const radius = op.flags.radius || Math.max(
+                    op.rect[2] - op.rect[0],
+                    op.rect[3] - op.rect[1]
+                ) / 2;
+                const shader = this.ck.Shader.MakeRadialGradient(
+                    center, radius, colors, positions, this.ck.TileMode.Clamp
+                );
+                paint.setShader(shader);
+            }
+        } else if (op.flags) {
+            const c = op.flags;
+            paint.setColor(this.ck.Color4f(c.r || 0, c.g || 0, c.b || 0, c.a ?? 1));
+
+            if (c.style === 1) {
+                paint.setStyle(this.ck.PaintStyle.Stroke);
+                paint.setStrokeWidth(c.strokeWidth || 1);
+
+                // Apply dash pattern if present (for dotted/dashed outlines)
+                if (c.dashPattern && c.dashPattern.intervals && c.dashPattern.intervals.length > 0) {
+                    const intervals = new Float32Array(c.dashPattern.intervals);
+                    const phase = c.dashPattern.phase || 0;
+                    const pathEffect = this.ck.PathEffect.MakeDash(intervals, phase);
+                    if (pathEffect) {
+                        paint.setPathEffect(pathEffect);
+                    }
+                }
+            } else {
+                paint.setStyle(this.ck.PaintStyle.Fill);
+            }
+        } else {
+            paint.setStyle(this.ck.PaintStyle.Fill);
+        }
+
+        canvas.drawRRect(rrect, paint);
+
+        paint.delete();
+    }
+
+    // Draw double rounded rect (area between outer and inner rrects)
+    // Used for borders and inset box-shadows
+    drawDRRect(canvas, op) {
+        if (!op.outer_rect || !op.inner_rect) {
+            if (this.debug) this.log('DrawDRRectOp missing outer/inner rect data');
+            return;
+        }
+
+        // Create outer rrect
+        const outerRect = this.ck.LTRBRect(
+            op.outer_rect[0], op.outer_rect[1], op.outer_rect[2], op.outer_rect[3]
+        );
+        const outerRx = op.outer_radii ? op.outer_radii[0] : 0;
+        const outerRy = op.outer_radii ? op.outer_radii[1] : 0;
+        const outerRRect = this.ck.RRectXY(outerRect, outerRx, outerRy);
+
+        // Create inner rrect
+        const innerRect = this.ck.LTRBRect(
+            op.inner_rect[0], op.inner_rect[1], op.inner_rect[2], op.inner_rect[3]
+        );
+        const innerRx = op.inner_radii ? op.inner_radii[0] : 0;
+        const innerRy = op.inner_radii ? op.inner_radii[1] : 0;
+        const innerRRect = this.ck.RRectXY(innerRect, innerRx, innerRy);
+
+        // Draw shadows first if present
+        const shadowResult = this.applyShadows(canvas, op, (c, p) => {
+            c.drawDRRect(outerRRect, innerRRect, p);
+        });
+
+        // If this is a shadow-only draw (Chromium box-shadow), don't draw the normal shape
+        // The shadow was drawn with BLACK fill + DrawLooper that transforms to shadow color
+        if (shadowResult === 'shadow_only') {
+            if (this.debug) {
+                this.log(`DrawDRRect outer=[${op.outer_rect.map(v => Math.round(v)).join(',')}] inner=[${op.inner_rect.map(v => Math.round(v)).join(',')}] (shadow-only)`);
+            }
+            return;
+        }
+
+        const paint = new this.ck.Paint();
+        paint.setAntiAlias(true);
+
+        if (op.flags) {
+            const c = op.flags;
+            paint.setColor(this.ck.Color4f(c.r || 0, c.g || 0, c.b || 0, c.a ?? 1));
+
+            if (c.style === 1) {
+                paint.setStyle(this.ck.PaintStyle.Stroke);
+                paint.setStrokeWidth(c.strokeWidth || 1);
+
+                // Apply dash pattern if present (for dotted/dashed outlines)
+                if (c.dashPattern && c.dashPattern.intervals && c.dashPattern.intervals.length > 0) {
+                    const intervals = new Float32Array(c.dashPattern.intervals);
+                    const phase = c.dashPattern.phase || 0;
+                    const pathEffect = this.ck.PathEffect.MakeDash(intervals, phase);
+                    if (pathEffect) {
+                        paint.setPathEffect(pathEffect);
+                    }
+                }
+            } else {
+                paint.setStyle(this.ck.PaintStyle.Fill);
+            }
+        } else {
+            paint.setColor(this.ck.Color4f(0.5, 0.5, 0.5, 1));
+            paint.setStyle(this.ck.PaintStyle.Fill);
+        }
+
+        // drawDRRect draws the area between outer and inner
+        canvas.drawDRRect(outerRRect, innerRRect, paint);
+
+        if (this.debug) {
+            this.log(`DrawDRRect outer=[${op.outer_rect.map(v => Math.round(v)).join(',')}] inner=[${op.inner_rect.map(v => Math.round(v)).join(',')}]`);
+        }
+
+        paint.delete();
+    }
+
+    drawPath(canvas, op) {
+        if (!op.path) return;
+
+        const path = this.ck.Path.MakeFromSVGString(op.path);
+        if (!path) return;
+
+        if (op.fillType !== undefined) {
+            const fillTypes = [
+                this.ck.FillType.Winding,
+                this.ck.FillType.EvenOdd,
+                this.ck.FillType.InverseWinding,
+                this.ck.FillType.InverseEvenOdd
+            ];
+            if (fillTypes[op.fillType]) {
+                path.setFillType(fillTypes[op.fillType]);
+            }
+        }
+
+        // Draw shadows first if present
+        const shadowResult = this.applyShadows(canvas, op, (c, p) => {
+            c.drawPath(path, p);
+        });
+
+        // If this is a shadow-only draw, don't draw the normal shape
+        if (shadowResult === 'shadow_only') {
+            if (this.debug) {
+                this.log(`DrawPath (shadow-only)`);
+            }
+            path.delete();
+            return;
+        }
+
+        const paint = new this.ck.Paint();
+        if (op.flags) {
+            const r = op.flags.r !== undefined ? op.flags.r : 0;
+            const g = op.flags.g !== undefined ? op.flags.g : 0;
+            const b = op.flags.b !== undefined ? op.flags.b : 0;
+            const a = op.flags.a !== undefined ? op.flags.a : 1;
+            paint.setColor(this.ck.Color4f(r, g, b, a));
+
+            if (op.flags.style === 1) {
+                paint.setStyle(this.ck.PaintStyle.Stroke);
+
+                // Apply dash pattern if present (for dotted/dashed outlines)
+                if (op.flags.dashPattern && op.flags.dashPattern.intervals && op.flags.dashPattern.intervals.length > 0) {
+                    const intervals = new Float32Array(op.flags.dashPattern.intervals);
+                    const phase = op.flags.dashPattern.phase || 0;
+                    const pathEffect = this.ck.PathEffect.MakeDash(intervals, phase);
+                    if (pathEffect) {
+                        paint.setPathEffect(pathEffect);
+                    }
+                }
+            } else {
+                paint.setStyle(this.ck.PaintStyle.Fill);
+            }
+            if (op.flags.strokeWidth !== undefined) {
+                paint.setStrokeWidth(op.flags.strokeWidth);
+            }
+        }
+        paint.setAntiAlias(true);
+        canvas.drawPath(path, paint);
+        paint.delete();
+        path.delete();
+    }
+
+    saveLayer(canvas, op) {
+        const paint = new this.ck.Paint();
+        paint.setAntiAlias(true);
+
+        if (op.flags) {
+            const c = op.flags;
+            if (c.a !== undefined) {
+                paint.setAlphaf(c.a);
+            }
+        }
+
+        // Handle blend mode (critical for gradient text using DstIn compositing)
+        // Skia blend mode values: 0=Clear, 1=Src, 2=Dst, 3=SrcOver, 4=DstOver,
+        // 5=SrcIn, 6=DstIn, 7=SrcOut, 8=DstOut, 9=SrcATop, 10=DstATop, etc.
+        const blendModeNames = [
+            'Clear', 'Src', 'Dst', 'SrcOver', 'DstOver',
+            'SrcIn', 'DstIn', 'SrcOut', 'DstOut', 'SrcATop', 'DstATop',
+            'Xor', 'Plus', 'Modulate', 'Screen', 'Overlay',
+            'Darken', 'Lighten', 'ColorDodge', 'ColorBurn',
+            'HardLight', 'SoftLight', 'Difference', 'Exclusion',
+            'Multiply', 'Hue', 'Saturation', 'Color', 'Luminosity'
+        ];
+        const blendName = op.blendMode !== undefined ? blendModeNames[op.blendMode] || op.blendMode : 'default';
+
+        // Track background-clip context: DstIn (6) is used for background-clip: text
+        // Also log SrcOver (3) layers as they might be isolation layers for background-clip
+        const isDstIn = op.blendMode === 6;
+        const isSrcOver = op.blendMode === 3;
+
+        // Log all SaveLayerOp to debug background-clip
+        console.log(`[BG-CLIP] SaveLayerOp: blendMode=${blendName}(${op.blendMode})`);
+
+        if (isDstIn) {
+            this._bgClipLayerDepth++;
+            console.log(`[BG-CLIP]    ^ This is DstIn - starts background-clip text masking`);
+        }
+
+        if (op.blendMode !== undefined) {
+            const blendModes = [
+                this.ck.BlendMode.Clear,      // 0
+                this.ck.BlendMode.Src,        // 1
+                this.ck.BlendMode.Dst,        // 2
+                this.ck.BlendMode.SrcOver,    // 3
+                this.ck.BlendMode.DstOver,    // 4
+                this.ck.BlendMode.SrcIn,      // 5
+                this.ck.BlendMode.DstIn,      // 6
+                this.ck.BlendMode.SrcOut,     // 7
+                this.ck.BlendMode.DstOut,     // 8
+                this.ck.BlendMode.SrcATop,    // 9
+                this.ck.BlendMode.DstATop,    // 10
+                this.ck.BlendMode.Xor,        // 11
+                this.ck.BlendMode.Plus,       // 12
+                this.ck.BlendMode.Modulate,   // 13
+                this.ck.BlendMode.Screen,     // 14
+                this.ck.BlendMode.Overlay,    // 15
+                this.ck.BlendMode.Darken,     // 16
+                this.ck.BlendMode.Lighten,    // 17
+                this.ck.BlendMode.ColorDodge, // 18
+                this.ck.BlendMode.ColorBurn,  // 19
+                this.ck.BlendMode.HardLight,  // 20
+                this.ck.BlendMode.SoftLight,  // 21
+                this.ck.BlendMode.Difference, // 22
+                this.ck.BlendMode.Exclusion,  // 23
+                this.ck.BlendMode.Multiply,   // 24
+                this.ck.BlendMode.Hue,        // 25
+                this.ck.BlendMode.Saturation, // 26
+                this.ck.BlendMode.Color,      // 27
+                this.ck.BlendMode.Luminosity, // 28
+            ];
+            if (blendModes[op.blendMode]) {
+                paint.setBlendMode(blendModes[op.blendMode]);
+            }
+        }
+
+        // Verify blend mode was applied
+        const appliedBlendMode = isDstIn ? 'DstIn' : (isSrcOver ? 'SrcOver' : blendName);
+
+        if (op.bounds && op.bounds.length === 4 && op.bounds[0] !== null) {
+            const bounds = this.ck.LTRBRect(op.bounds[0], op.bounds[1], op.bounds[2], op.bounds[3]);
+            canvas.saveLayer(paint, bounds);
+            console.log(`[BG-CLIP]    -> canvas.saveLayer(blendMode=${appliedBlendMode}, bounds=[${op.bounds.join(', ')}])`);
+        } else {
+            canvas.saveLayer(paint);
+            console.log(`[BG-CLIP]    -> canvas.saveLayer(blendMode=${appliedBlendMode}) [no bounds]`);
+        }
+        paint.delete();
+    }
+
+    // Draw a line from (x0, y0) to (x1, y1)
+    // Used for text decorations (underlines, strikethroughs, etc.)
+    drawLine(canvas, op) {
+        const paint = new this.ck.Paint();
+        paint.setAntiAlias(true);
+
+        // Get color and style from flags
+        if (op.flags) {
+            const c = op.flags;
+            paint.setColor(this.ck.Color4f(c.r || 0, c.g || 0, c.b || 0, c.a ?? 1));
+
+            // DrawLine in Skia uses stroke style
+            paint.setStyle(this.ck.PaintStyle.Stroke);
+            paint.setStrokeWidth(c.strokeWidth || 1);
+
+            // Apply stroke cap (round caps for dotted lines, butt for regular)
+            if (c.strokeCap === 1) {
+                paint.setStrokeCap(this.ck.StrokeCap.Round);
+            } else if (c.strokeCap === 2) {
+                paint.setStrokeCap(this.ck.StrokeCap.Square);
+            } else {
+                paint.setStrokeCap(this.ck.StrokeCap.Butt);
+            }
+
+            // Apply dash pattern if present (for dotted/dashed lines)
+            if (c.dashPattern && c.dashPattern.intervals && c.dashPattern.intervals.length > 0) {
+                // For dotted lines, Chromium uses [0, gap] intervals with round caps
+                // The round cap creates the dot. We need a tiny "on" value for CanvasKit.
+                const rawIntervals = c.dashPattern.intervals;
+                const adjustedIntervals = rawIntervals.map((v, i) => {
+                    // If "on" interval is 0, use a tiny value so round cap creates a dot
+                    if (i % 2 === 0 && v === 0) {
+                        return 0.01; // Tiny value, round cap will make it a circle
+                    }
+                    return v;
+                });
+                const intervals = new Float32Array(adjustedIntervals);
+                const phase = c.dashPattern.phase || 0;
+                const pathEffect = this.ck.PathEffect.MakeDash(intervals, phase);
+                if (pathEffect) {
+                    paint.setPathEffect(pathEffect);
+                }
+            }
+        } else {
+            // Default: black line with 1px stroke
+            paint.setColor(this.ck.Color4f(0, 0, 0, 1));
+            paint.setStyle(this.ck.PaintStyle.Stroke);
+            paint.setStrokeWidth(1);
+        }
+
+        canvas.drawLine(op.x0, op.y0, op.x1, op.y1, paint);
+
+        if (this.debug) {
+            this.log(`DrawLine (${op.x0}, ${op.y0}) -> (${op.x1}, ${op.y1})`);
+        }
+
+        paint.delete();
+    }
+
+    // Draw a tiled pattern (used for wavy underlines and background-clip: text)
+    // The tile record contains the pattern to repeat
+    drawTiledPattern(canvas, op, destRect, logBgClip = false) {
+        const tileRect = op.flags.tileRect;
+        const tileRecord = op.flags.tileRecord;
+
+        // destRect is a Float32Array[4] from CanvasKit.LTRBRect: [left, top, right, bottom]
+        const destLeft = destRect[0];
+        const destTop = destRect[1];
+        const destRight = destRect[2];
+        const destBottom = destRect[3];
+
+        if (!tileRect || !tileRecord || tileRecord.length === 0) {
+            if (this.debug) this.log('drawTiledPattern: missing tile data');
+            return;
+        }
+
+        const tileWidth = tileRect[2] - tileRect[0];
+        const tileHeight = tileRect[3] - tileRect[1];
+        const destWidth = destRight - destLeft;
+        const destHeight = destBottom - destTop;
+
+        if (tileWidth <= 0 || tileHeight <= 0) {
+            if (this.debug) this.log('drawTiledPattern: invalid tile dimensions');
+            return;
+        }
+
+        if (logBgClip) {
+            console.log(`[BG-CLIP]    Drawing gradient tile: dest=[${destLeft}, ${destTop}, ${destRight}, ${destBottom}]`);
+            for (const tileOp of tileRecord) {
+                const shaderType = tileOp.flags?.shaderType || '';
+                const colorCount = tileOp.flags?.gradientColors?.length || 0;
+                console.log(`[BG-CLIP]    - ${tileOp.type} ${shaderType} (${colorCount} colors)`);
+            }
+        }
+
+        // Check if this is a single gradient that should be scaled to fill the destination
+        // rather than tiled (for background-clip: border-box where gradient should extend to border)
+        const singleGradientOp = tileRecord.length === 1 &&
+            tileRecord[0].type === 'DrawRectOp' &&
+            tileRecord[0].flags?.shaderType?.includes('Gradient');
+
+        if (singleGradientOp && (destWidth > tileWidth || destHeight > tileHeight)) {
+            // Scale the gradient to fill the entire destination area
+            const gradientOp = tileRecord[0];
+            const scaleX = destWidth / tileWidth;
+            const scaleY = destHeight / tileHeight;
+
+            canvas.save();
+            canvas.clipRect(destRect, this.ck.ClipOp.Intersect, true);
+            canvas.translate(destLeft, destTop);
+
+            // Create a scaled version of the gradient
+            const paint = new this.ck.Paint();
+            paint.setAntiAlias(true);
+
+            if (gradientOp.flags.gradientColors) {
+                const colors = gradientOp.flags.gradientColors.map(c =>
+                    this.ck.Color4f(c.r || 0, c.g || 0, c.b || 0, c.a ?? 1)
+                );
+                const positions = gradientOp.flags.gradientPositions || null;
+
+                if (gradientOp.flags.shaderType === 'kLinearGradient' || gradientOp.flags.shaderType === 'LinearGradient') {
+                    // Scale the gradient endpoints to match the destination size
+                    const startPt = gradientOp.flags.startPoint || [0, 0];
+                    const endPt = gradientOp.flags.endPoint || [tileWidth, tileHeight];
+
+                    const scaledStartPt = [startPt[0] * scaleX, startPt[1] * scaleY];
+                    const scaledEndPt = [endPt[0] * scaleX, endPt[1] * scaleY];
+
+                    const shader = this.ck.Shader.MakeLinearGradient(
+                        scaledStartPt, scaledEndPt, colors, positions, this.ck.TileMode.Clamp
+                    );
+                    paint.setShader(shader);
+                } else if (gradientOp.flags.shaderType === 'kRadialGradient' || gradientOp.flags.shaderType === 'RadialGradient') {
+                    const center = gradientOp.flags.center || [tileWidth / 2, tileHeight / 2];
+                    const radius = gradientOp.flags.radius || Math.max(tileWidth, tileHeight) / 2;
+
+                    const scaledCenter = [center[0] * scaleX, center[1] * scaleY];
+                    const scaledRadius = radius * Math.max(scaleX, scaleY);
+
+                    const shader = this.ck.Shader.MakeRadialGradient(
+                        scaledCenter, scaledRadius, colors, positions, this.ck.TileMode.Clamp
+                    );
+                    paint.setShader(shader);
+                }
+            }
+
+            // Draw the gradient to fill the destination
+            const scaledRect = this.ck.LTRBRect(0, 0, destWidth, destHeight);
+            canvas.drawRect(scaledRect, paint);
+            paint.delete();
+
+            canvas.restore();
+            return;
+        }
+
+        // Standard tiling for non-gradient patterns or exact-fit tiles
+        canvas.save();
+        // Clip to destination rectangle
+        canvas.clipRect(destRect, this.ck.ClipOp.Intersect, true);
+        // Translate to destination origin
+        canvas.translate(destLeft, destTop);
+
+        // Calculate how many tiles we need
+        const tilesX = Math.ceil(destWidth / tileWidth) + 1;
+        const tilesY = Math.ceil(destHeight / tileHeight) + 1;
+        for (let ty = 0; ty < tilesY; ty++) {
+            for (let tx = 0; tx < tilesX; tx++) {
+                canvas.save();
+                canvas.translate(tx * tileWidth, ty * tileHeight);
+
+                // Render each op in the tile record
+                for (const tileOp of tileRecord) {
+                    this.renderOp(canvas, tileOp);
+                }
+
+                canvas.restore();
+            }
+        }
+
+        canvas.restore();
+    }
+
+    drawTextBlob(canvas, op) {
+        // Log text drawing only when in background-clip context (DstIn layer)
+        if (this._bgClipLayerDepth > 0) {
+            const color = op.flags ? `rgba(${op.flags.r}, ${op.flags.g}, ${op.flags.b}, ${op.flags.a})` : 'unknown';
+            console.log(`[BG-CLIP] ${this._bgClipLayerDepth + 1}. DrawTextBlobOp (text mask): pos=(${op.x}, ${op.y}), color=${color}`);
+        }
+
+        if (op.runs && op.runs.length > 0) {
+            this.drawTextBlobWithRuns(canvas, op);
+            return;
+        }
+
+        if (this.debug) this.log(`DrawTextBlobOp at (${op.x}, ${op.y}) - no glyph data`);
+    }
+
+    drawTextBlobWithRuns(canvas, op) {
+        const POSITIONING_DEFAULT = 0;
+        const POSITIONING_HORIZONTAL = 1;
+        const POSITIONING_FULL = 2;
+        const POSITIONING_RSXFORM = 3;
+
+        // Pre-create all text blobs for shadow and normal rendering
+        const textBlobData = [];
+
+        for (const run of op.runs) {
+            if (!run.glyphs || run.glyphCount <= 0) continue;
+
+            const glyphCount = run.glyphCount;
+            const positioning = run.positioning !== undefined ? run.positioning : POSITIONING_FULL;
+
+            const fontInfo = run.font || {};
+            const fontSize = fontInfo.size || 16;
+            const fontWeight = fontInfo.weight || 400;
+
+            const font = new window.CanvasKit.Font(window.typeface, fontSize);
+            font.setHinting(window.CanvasKit.FontHinting.Normal);
+            font.setSubpixel(true);
+            font.setEdging(window.CanvasKit.FontEdging.SubpixelAntiAlias);
+
+            if (fontWeight >= 600 || fontInfo.embolden) {
+                font.setEmbolden(true);
+            }
+
+            const glyphs = new Uint16Array(glyphCount);
+            for (let i = 0; i < glyphCount && i < run.glyphs.length; i++) {
+                glyphs[i] = run.glyphs[i];
+            }
+
+            const rsxforms = new Float32Array(glyphCount * 4);
+
+            if (positioning === POSITIONING_RSXFORM && run.rsxforms) {
+                for (let i = 0; i < glyphCount && i < run.rsxforms.length; i++) {
+                    const xf = run.rsxforms[i];
+                    rsxforms[i * 4]     = xf.scos || 1.0;
+                    rsxforms[i * 4 + 1] = xf.ssin || 0.0;
+                    rsxforms[i * 4 + 2] = xf.tx || 0;
+                    rsxforms[i * 4 + 3] = xf.ty || 0;
+                }
+            } else if (positioning === POSITIONING_FULL && run.positions) {
+                for (let i = 0; i < glyphCount && i < run.positions.length; i++) {
+                    const pos = run.positions[i];
+                    rsxforms[i * 4]     = 1.0;
+                    rsxforms[i * 4 + 1] = 0.0;
+                    rsxforms[i * 4 + 2] = pos.x || 0;
+                    rsxforms[i * 4 + 3] = pos.y || 0;
+                }
+            } else if (positioning === POSITIONING_HORIZONTAL && run.positions) {
+                for (let i = 0; i < glyphCount && i < run.positions.length; i++) {
+                    rsxforms[i * 4]     = 1.0;
+                    rsxforms[i * 4 + 1] = 0.0;
+                    rsxforms[i * 4 + 2] = run.positions[i] || 0;
+                    rsxforms[i * 4 + 3] = 0;
+                }
+            } else {
+                for (let i = 0; i < glyphCount; i++) {
+                    rsxforms[i * 4]     = 1.0;
+                    rsxforms[i * 4 + 1] = 0.0;
+                    rsxforms[i * 4 + 2] = 0;
+                    rsxforms[i * 4 + 3] = 0;
+                }
+            }
+
+            const blob = CanvasKit.TextBlob.MakeFromRSXformGlyphs(glyphs, rsxforms, font);
+            if (blob) {
+                const drawX = (op.x || 0) + (run.offsetX || 0);
+                const drawY = (op.y || 0) + (run.offsetY || 0);
+                textBlobData.push({ blob, drawX, drawY, font });
+            } else {
+                font.delete();
+            }
+        }
+
+        // Apply shadows first if present
+        const shadowResult = this.applyShadows(canvas, op, (c, shadowPaint) => {
+            for (const item of textBlobData) {
+                c.drawTextBlob(item.blob, item.drawX, item.drawY, shadowPaint);
+            }
+        });
+
+        // If shadow-only draw, cleanup and return
+        if (shadowResult === 'shadow_only') {
+            for (const item of textBlobData) {
+                item.blob.delete();
+                item.font.delete();
+            }
+            if (this.debug) {
+                this.log(`DrawTextBlob at (${op.x}, ${op.y}) (shadow-only)`);
+            }
+            return;
+        }
+
+        // Draw normal text with original paint
+        const paint = new this.ck.Paint();
+        paint.setAntiAlias(true);
+
+        if (op.flags) {
+            const c = op.flags;
+
+            // Handle gradient shaders (linear and radial) for gradient text
+            if (c.shaderType && c.gradientColors) {
+                const colors = c.gradientColors.map(gc =>
+                    this.ck.Color4f(gc.r || 0, gc.g || 0, gc.b || 0, gc.a ?? 1)
+                );
+                const positions = c.gradientPositions || null;
+
+                if (c.shaderType === 'kLinearGradient' || c.shaderType === 'LinearGradient') {
+                    let startPt = c.startPoint || [0, 0];
+                    let endPt = c.endPoint || [100, 0];
+
+                    // Fix for SVG gradients: if endpoints are percentage-based (0-1 range),
+                    // scale them to the text bounds
+                    const gradientWidth = Math.abs(endPt[0] - startPt[0]);
+                    const gradientHeight = Math.abs(endPt[1] - startPt[1]);
+                    if (gradientWidth <= 1 && gradientHeight <= 1 && op.bounds) {
+                        // Endpoints appear to be in 0-1 percentage range
+                        // Scale to actual text bounds
+                        const textWidth = op.bounds[2] - op.bounds[0];
+                        const textHeight = op.bounds[3] - op.bounds[1];
+                        startPt = [
+                            op.bounds[0] + startPt[0] * textWidth,
+                            op.bounds[1] + startPt[1] * textHeight
+                        ];
+                        endPt = [
+                            op.bounds[0] + endPt[0] * textWidth,
+                            op.bounds[1] + endPt[1] * textHeight
+                        ];
+                        if (this.debug) {
+                            this.log(`Scaled gradient endpoints: [${startPt}] -> [${endPt}]`);
+                        }
+                    }
+
+                    const shader = this.ck.Shader.MakeLinearGradient(
+                        startPt, endPt, colors, positions, this.ck.TileMode.Clamp
+                    );
+                    paint.setShader(shader);
+                } else if (c.shaderType === 'kRadialGradient' || c.shaderType === 'RadialGradient') {
+                    const center = c.center || [50, 50];
+                    const radius = c.radius || 50;
+                    const shader = this.ck.Shader.MakeRadialGradient(
+                        center, radius, colors, positions, this.ck.TileMode.Clamp
+                    );
+                    paint.setShader(shader);
+                }
+            } else {
+                // Solid color fallback - use ?? instead of || to handle alpha=0 correctly
+                const alpha = c.a ?? 1;
+                paint.setColor(this.ck.Color4f(c.r ?? 0, c.g ?? 0, c.b ?? 0, alpha));
+            }
+
+            // Handle stroke vs fill style
+            if (c.style === 1) {
+                paint.setStyle(this.ck.PaintStyle.Stroke);
+                paint.setStrokeWidth(c.strokeWidth || 1);
+
+                // Apply stroke cap
+                if (c.strokeCap === 1) {
+                    paint.setStrokeCap(this.ck.StrokeCap.Round);
+                } else if (c.strokeCap === 2) {
+                    paint.setStrokeCap(this.ck.StrokeCap.Square);
+                } else {
+                    paint.setStrokeCap(this.ck.StrokeCap.Butt);
+                }
+
+                // Apply stroke join
+                if (c.strokeJoin === 1) {
+                    paint.setStrokeJoin(this.ck.StrokeJoin.Round);
+                } else if (c.strokeJoin === 2) {
+                    paint.setStrokeJoin(this.ck.StrokeJoin.Bevel);
+                } else {
+                    paint.setStrokeJoin(this.ck.StrokeJoin.Miter);
+                }
+            } else {
+                paint.setStyle(this.ck.PaintStyle.Fill);
+            }
+        } else {
+            paint.setColor(this.ck.BLACK);
+            paint.setStyle(this.ck.PaintStyle.Fill);
+        }
+
+        for (const item of textBlobData) {
+            canvas.drawTextBlob(item.blob, item.drawX, item.drawY, paint);
+        }
+
+        // Cleanup
+        paint.delete();
+        for (const item of textBlobData) {
+            item.blob.delete();
+            item.font.delete();
+        }
+
+        if (this.debug) {
+            const styleInfo = op.flags?.style === 1 ? ' (stroke)' : '';
+            const shadowInfo = shadowResult ? ' with shadows' : '';
+            if (styleInfo || shadowInfo) {
+                this.log(`DrawTextBlob at (${op.x}, ${op.y})${styleInfo}${shadowInfo}`);
+            }
+        }
+    }
+}
+
+// ============================================
+// Raw Paint Ops Compositor
+// ============================================
+
+class RawPaintOpsCompositor {
+    constructor(canvasKit, surface) {
+        this.ck = canvasKit;
+        this.surface = surface;
+        this.renderer = new PaintOpRenderer(canvasKit, null);
+        this.debug = false;
+    }
+
+    // Sort paint ops by Z-depth for 3D contexts (preserve-3d)
+    // Uses painter's algorithm: further elements (smaller Z) painted first
+    sortOpsBy3DDepth(paintOps, trees) {
+        // Check if an accumulated matrix has 3D perspective components
+        const is3DMatrix = (m) => {
+            if (!m || m.length !== 16) return false;
+            const eps = 0.0001;
+            // Check for perspective (non-trivial values in last row)
+            // or 3D rotation (non-identity Z-related values)
+            return Math.abs(m[12]) > eps || Math.abs(m[13]) > eps ||
+                   Math.abs(m[14]) > eps || Math.abs(m[15] - 1) > eps ||
+                   Math.abs(m[2]) > eps || Math.abs(m[6]) > eps ||
+                   Math.abs(m[8]) > eps || Math.abs(m[9]) > eps;
+        };
+
+        // Find all 3D transform IDs by checking ACCUMULATED matrices
+        const threeDTransformIds = new Set();
+        const seenTransformIds = new Set();
+
+        for (const op of paintOps) {
+            if (op.transform_id !== undefined && !seenTransformIds.has(op.transform_id)) {
+                seenTransformIds.add(op.transform_id);
+                const matrix = trees.getTransformMatrix(op.transform_id);
+                if (is3DMatrix(matrix)) {
+                    threeDTransformIds.add(op.transform_id);
+                }
+            }
+        }
+
+        if (threeDTransformIds.size === 0) {
+            return paintOps;
+        }
+
+        if (this.debug) {
+            console.log('3D transform IDs:', [...threeDTransformIds].sort((a,b) => a-b).join(', '));
+        }
+
+        // Calculate Z-depth for a transform_id using a fixed center point
+        // For row-major 4x4: z' = m[8]*x + m[9]*y + m[11]
+        const getTransformZ = (transformId) => {
+            const matrix = trees.getTransformMatrix(transformId);
+            if (!matrix || matrix.length !== 16) return 0;
+            // Use center of a 120x120 element (60, 60) as reference point
+            const cx = 60, cy = 60;
+            return cx * matrix[8] + cy * matrix[9] + matrix[11];
+        };
+
+        // Group consecutive ops with 3D transforms, then sort by transform_id's Z
+        const result = [];
+        let currentGroup = []; // Array of ops (not wrapped)
+
+        const sortAndFlush3DGroup = () => {
+            if (currentGroup.length === 0) return;
+
+            // Group ops by transform_id, preserving order within each transform
+            const byTransformId = new Map();
+            for (const op of currentGroup) {
+                const tid = op.transform_id;
+                if (!byTransformId.has(tid)) {
+                    byTransformId.set(tid, { ops: [], z: getTransformZ(tid) });
+                }
+                byTransformId.get(tid).ops.push(op);
+            }
+
+            // Sort transform_ids, but respect parent-child relationships
+            // Parent transforms must always be painted before their children
+            const sortedGroups = [...byTransformId.entries()]
+                .sort((a, b) => {
+                    const tidA = a[0];
+                    const tidB = b[0];
+
+                    // If A is ancestor of B, A comes first (negative)
+                    if (trees.isTransformAncestor(tidA, tidB)) {
+                        return -1;
+                    }
+                    // If B is ancestor of A, B comes first (positive)
+                    if (trees.isTransformAncestor(tidB, tidA)) {
+                        return 1;
+                    }
+
+                    // Neither is ancestor of the other - sort by Z (ascending: further first)
+                    return a[1].z - b[1].z;
+                });
+
+            if (this.debug) {
+                console.log('Sorted 3D by transform_id:', sortedGroups.map(([tid, data]) =>
+                    `t${tid}(z=${data.z.toFixed(1)}, ${data.ops.length} ops)`
+                ).join(' -> '));
+            }
+
+            // Output ops grouped by transform_id
+            for (const [tid, data] of sortedGroups) {
+                for (const op of data.ops) {
+                    result.push(op);
+                }
+            }
+
+            currentGroup = [];
+        };
+
+        for (const op of paintOps) {
+            const uses3D = op.transform_id !== undefined &&
+                          threeDTransformIds.has(op.transform_id);
+
+            if (uses3D) {
+                currentGroup.push(op);
+            } else {
+                sortAndFlush3DGroup();
+                result.push(op);
+            }
+        }
+
+        // Handle remaining group
+        sortAndFlush3DGroup();
+
+        return result;
+    }
+
+    // Log details for 3D cube faces (transform_ids 52-60)
+    logCubeOperations(paintOps, trees) {
+        const cubeOps = paintOps.filter(op =>
+            op.transform_id >= 52 && op.transform_id <= 60
+        );
+
+        console.log('=== Cube Face Operations ===');
+        console.log(`Found ${cubeOps.length} cube operations`);
+
+        for (const op of cubeOps) {
+            const matrix = trees.getTransformMatrix(op.transform_id);
+            const effect = trees.getEffect(op.effect_id);
+
+            console.log(`\n${op.type} (transform_id: ${op.transform_id}, effect_id: ${op.effect_id})`);
+
+            if (op.type === 'DrawTextBlobOp' && op.runs?.[0]?.glyphs) {
+                const glyph = op.runs[0].glyphs[0];
+                const letter = String.fromCharCode(glyph + 29); // Approximate: 41->F, 37->B, etc.
+                console.log(`  Glyph: ${glyph} (${letter})`);
+            }
+
+            if (op.type === 'DrawRectOp' && op.flags) {
+                console.log(`  Color: rgba(${(op.flags.r*255).toFixed(0)}, ${(op.flags.g*255).toFixed(0)}, ${(op.flags.b*255).toFixed(0)}, ${op.flags.a.toFixed(2)})`);
+            }
+
+            console.log(`  Matrix (row-major 4x4):`);
+            if (matrix && matrix.length === 16) {
+                console.log(`    [${matrix.slice(0,4).map(v => v.toFixed(3)).join(', ')}]`);
+                console.log(`    [${matrix.slice(4,8).map(v => v.toFixed(3)).join(', ')}]`);
+                console.log(`    [${matrix.slice(8,12).map(v => v.toFixed(3)).join(', ')}]`);
+                console.log(`    [${matrix.slice(12,16).map(v => v.toFixed(3)).join(', ')}]`);
+            }
+
+            if (effect) {
+                console.log(`  Effect: opacity=${effect.opacity}, blend_mode=${effect.blend_mode}`);
+            }
+        }
+        console.log('\n=== End Cube Operations ===\n');
+    }
+
+    drawFrame(paintOps, trees) {
+        const canvas = this.surface.getCanvas();
+        canvas.clear(this.ck.WHITE);
+
+        this.renderer.debug = this.debug;
+        this.renderer.opLog = [];
+
+        // Log cube operations for debugging
+        if (this.debug) {
+            this.logCubeOperations(paintOps, trees);
+        }
+
+        // Sort paint ops by Z-depth for 3D contexts (painter's algorithm)
+        paintOps = this.sortOpsBy3DDepth(paintOps, trees);
+
+        // Track current property tree state for efficient state changes
+        let currentTransformId = null;
+        let currentTransformMatrix = null;
+        let currentEffectId = null;
+        let currentClipId = null;
+        let effectLayerStack = [];
+        let clipLayerStack = [];  // Track clip layers for proper restoration
+
+        for (const op of paintOps) {
+            // Check if we need to change clip (from property tree clip_path)
+            if (op.clip_id !== currentClipId && op.clip_id !== undefined) {
+                // Restore previous clip layers
+                while (clipLayerStack.length > 0) {
+                    canvas.restore();
+                    clipLayerStack.pop();
+                }
+                // Reset transform tracking since restore clears it
+                currentTransformMatrix = null;
+                currentTransformId = null;
+
+                // Apply new clip if needed
+                const clipNode = trees.getClip(op.clip_id);
+                if (clipNode && clipNode.clip_path) {
+                    // CSS clip-path from property tree
+                    canvas.save();
+                    clipLayerStack.push(op.clip_id);
+                    const path = this.ck.Path.MakeFromSVGString(clipNode.clip_path);
+                    if (path) {
+                        canvas.clipPath(path, this.ck.ClipOp.Intersect, true);
+                        path.delete();
+                    }
+                }
+                currentClipId = op.clip_id;
+            }
+
+            // Check if we need to change transform
+            // Use inverse matrix approach to preserve clip state (no save/restore)
+            if (op.transform_id !== currentTransformId && op.transform_id !== undefined) {
+                // First, undo the current transform by applying its inverse
+                if (currentTransformMatrix) {
+                    const inverse = this.ck.M44.invert(currentTransformMatrix);
+                    if (inverse) {
+                        canvas.concat(inverse);
+                    }
+                }
+                // Then apply the new transform
+                const newMatrix = trees.getTransformMatrix(op.transform_id);
+                canvas.concat(newMatrix);
+                currentTransformId = op.transform_id;
+                currentTransformMatrix = newMatrix;
+            }
+
+            // Check if we need to change effect (opacity/blend mode)
+            if (op.effect_id !== currentEffectId) {
+                // Close any existing effect layers
+                while (effectLayerStack.length > 0) {
+                    canvas.restore();
+                    effectLayerStack.pop();
+                }
+
+                // Apply new effect if needed
+                const effect = trees.getEffect(op.effect_id);
+                const needsOpacity = effect && effect.opacity < 1.0;
+                const blendMode = effect?.blend_mode || 'SrcOver';
+                const needsBlendMode = blendMode && blendMode !== 'SrcOver';
+
+                // Check for blur filter (CSS filter: blur())
+                let blurAmount = 0;
+                if (effect && effect.filter && effect.filter.length > 0) {
+                    for (const filterOp of effect.filter) {
+                        if (filterOp.type === 'blur' && filterOp.amount > 0) {
+                            blurAmount = filterOp.amount;
+                            break;
+                        }
+                    }
+                }
+                const needsBlur = blurAmount > 0;
+
+                // Check for backdrop-filter blur (CSS backdrop-filter: blur())
+                // NOTE: backdrop-filter requires element bounds to work correctly.
+                // Currently disabled until we can get proper bounds from the paint ops.
+                // let backdropBlurAmount = 0;
+                // if (effect && effect.backdrop_filter && effect.backdrop_filter.length > 0) {
+                //     for (const filterOp of effect.backdrop_filter) {
+                //         if (filterOp.type === 'blur' && filterOp.amount > 0) {
+                //             backdropBlurAmount = filterOp.amount;
+                //             break;
+                //         }
+                //     }
+                // }
+                const needsBackdropBlur = false; // Disabled for now
+
+                if (needsOpacity || needsBlendMode || needsBlur || needsBackdropBlur) {
+                    const layerPaint = new this.ck.Paint();
+                    if (needsOpacity) {
+                        layerPaint.setAlphaf(effect.opacity);
+                    }
+                    if (needsBlendMode) {
+                        // Map blend mode strings to CanvasKit blend modes
+                        const blendModeMap = {
+                            'SrcOver': this.ck.BlendMode.SrcOver,
+                            'Multiply': this.ck.BlendMode.Multiply,
+                            'Screen': this.ck.BlendMode.Screen,
+                            'Overlay': this.ck.BlendMode.Overlay,
+                            'Darken': this.ck.BlendMode.Darken,
+                            'Lighten': this.ck.BlendMode.Lighten,
+                            'ColorDodge': this.ck.BlendMode.ColorDodge,
+                            'ColorBurn': this.ck.BlendMode.ColorBurn,
+                            'HardLight': this.ck.BlendMode.HardLight,
+                            'SoftLight': this.ck.BlendMode.SoftLight,
+                            'Difference': this.ck.BlendMode.Difference,
+                            'Exclusion': this.ck.BlendMode.Exclusion,
+                            'Hue': this.ck.BlendMode.Hue,
+                            'Saturation': this.ck.BlendMode.Saturation,
+                            'Color': this.ck.BlendMode.Color,
+                            'Luminosity': this.ck.BlendMode.Luminosity,
+                        };
+                        if (blendModeMap[blendMode]) {
+                            layerPaint.setBlendMode(blendModeMap[blendMode]);
+                        }
+                    }
+                    if (needsBlur) {
+                        // Apply blur filter using ImageFilter (for CSS filter: blur())
+                        const blurFilter = this.ck.ImageFilter.MakeBlur(
+                            blurAmount,
+                            blurAmount,
+                            this.ck.TileMode.Clamp,
+                            null
+                        );
+                        layerPaint.setImageFilter(blurFilter);
+                    }
+
+                    if (needsBackdropBlur) {
+                        // For backdrop-filter, use saveLayer with backdrop parameter
+                        // Signature: saveLayer(paint, bounds, backdrop, flags)
+                        const backdropFilter = this.ck.ImageFilter.MakeBlur(
+                            backdropBlurAmount,
+                            backdropBlurAmount,
+                            this.ck.TileMode.Clamp,
+                            null
+                        );
+                        canvas.saveLayer(layerPaint, null, backdropFilter, 0);
+                    } else {
+                        canvas.saveLayer(layerPaint);
+                    }
+                    layerPaint.delete();
+                    effectLayerStack.push(op.effect_id);
+                }
+
+                currentEffectId = op.effect_id;
+            }
+
+            // Check for backface culling (CSS backface-visibility: hidden)
+            // Skip rendering if the element's back face is visible and should be hidden
+            if (op.transform_id !== undefined && currentTransformMatrix) {
+                if (trees.shouldCullBackface(op.transform_id, currentTransformMatrix)) {
+                    // Skip this paint op - back face is visible and should be hidden
+                    continue;
+                }
+            }
+
+            // Render the paint op
+            this.renderer.renderOp(canvas, op);
+        }
+
+        // Clean up any remaining effect layers
+        while (effectLayerStack.length > 0) {
+            canvas.restore();
+            effectLayerStack.pop();
+        }
+
+        // Clean up any remaining clip layers
+        while (clipLayerStack.length > 0) {
+            canvas.restore();
+            clipLayerStack.pop();
+        }
+
+        this.surface.flush();
+        return this.renderer.opLog;
+    }
+}
+
+// ============================================
+// Main
+// ============================================
+
+async function main() {
+    const statusEl = document.getElementById('status');
+    const layerListEl = document.getElementById('layerList');
+
+    try {
+        // 1. Initialize CanvasKit
+        const CanvasKit = await CanvasKitInit({
+            locateFile: (file) => `https://unpkg.com/canvaskit-wasm@0.39.1/bin/${file}`,
+        });
+        statusEl.textContent = "CanvasKit loaded. Fetching raw paint ops data...";
+
+        // 2. Fetch Raw Paint Ops Data (includes property trees)
+        const rawOpsRes = await fetch('raw_paint_ops.json');
+
+        if (!rawOpsRes.ok) {
+            throw new Error(`HTTP Error: ${rawOpsRes.status}`);
+        }
+
+        const rawOpsData = await rawOpsRes.json();
+        statusEl.textContent = "Raw paint ops data loaded. Setting up canvas...";
+
+        const paintOps = rawOpsData.paint_ops || [];
+
+        // 3. Setup Surface
+        const canvasEl = document.getElementById('skcanvas');
+
+        // Calculate canvas size from paint ops bounds
+        // Track cumulative translation from TranslateOp to calculate absolute positions
+        let maxW = 320, maxH = 148;
+        let translateX = 0, translateY = 0;
+        let saveStack = [];
+
+        for (const op of paintOps) {
+            if (op.type === 'SaveOp') {
+                saveStack.push({ x: translateX, y: translateY });
+            } else if (op.type === 'RestoreOp' && saveStack.length > 0) {
+                const saved = saveStack.pop();
+                translateX = saved.x;
+                translateY = saved.y;
+            } else if (op.type === 'TranslateOp') {
+                translateX += op.dx || 0;
+                translateY += op.dy || 0;
+            }
+
+            if (op.rect && op.rect.length === 4) {
+                maxW = Math.max(maxW, translateX + op.rect[2]);
+                maxH = Math.max(maxH, translateY + op.rect[3]);
+            }
+            if (op.bounds && op.bounds.length === 4) {
+                maxW = Math.max(maxW, op.bounds[2]);
+                maxH = Math.max(maxH, op.bounds[3]);
+            }
+            // DrawTextBlobOp has x, y position plus local bounds
+            if (op.type === 'DrawTextBlobOp' && op.y !== undefined) {
+                const localBottom = op.bounds ? op.bounds[3] : 20;
+                maxH = Math.max(maxH, op.y + localBottom);
+                if (op.x !== undefined) {
+                    const localRight = op.bounds ? op.bounds[2] : 100;
+                    maxW = Math.max(maxW, op.x + localRight);
+                }
+            }
+            // DrawDRRectOp uses outer_rect
+            if (op.outer_rect && op.outer_rect.length === 4) {
+                maxW = Math.max(maxW, op.outer_rect[2]);
+                maxH = Math.max(maxH, op.outer_rect[3]);
+            }
+        }
+
+        console.log(`Canvas size: ${maxW}x${maxH}`);
+        canvasEl.width = Math.min(maxW + 100, 3000);
+        canvasEl.height = Math.min(maxH + 100, 25000);
+
+        // Load font
+        const fontResp = await fetch("../Arial.ttf");
+        const fontData = await fontResp.arrayBuffer();
+        const typeface = CanvasKit.Typeface.MakeFreeTypeFaceFromData(fontData);
+
+        if (!typeface) {
+          console.error("Failed to load typeface");
+          statusEl.innerHTML = `<span class="error">Failed to load Arial.ttf font file</span>`;
+          return;
+        }
+
+        window.typeface = typeface;
+        window.CanvasKit = CanvasKit;
+
+        const surface = CanvasKit.MakeCanvasSurface('skcanvas');
+        if (!surface) throw new Error("Could not create Skia surface");
+
+        // 4. Initialize compositor with property trees from the same file
+        const propertyTrees = new PropertyTrees(rawOpsData, CanvasKit);
+        const compositor = new RawPaintOpsCompositor(CanvasKit, surface);
+
+        // 5. Render function
+        const redraw = () => {
+            compositor.debug = document.getElementById('chkDebug').checked;
+
+            const log = compositor.drawFrame(paintOps, propertyTrees);
+
+            // Show paint ops summary
+            const opTypes = {};
+            const transformIds = new Set();
+            const effectIds = new Set();
+            const clipIds = new Set();
+
+            for (const op of paintOps) {
+                opTypes[op.type] = (opTypes[op.type] || 0) + 1;
+                if (op.transform_id !== undefined) transformIds.add(op.transform_id);
+                if (op.effect_id !== undefined) effectIds.add(op.effect_id);
+                if (op.clip_id !== undefined) clipIds.add(op.clip_id);
+            }
+
+            let info = `Total Paint Ops: ${paintOps.length}\n\n`;
+            info += `--- Op Types ---\n`;
+            for (const [type, count] of Object.entries(opTypes).sort((a, b) => b[1] - a[1])) {
+                info += `  ${type}: ${count}\n`;
+            }
+
+            info += `\n--- Property Tree Usage ---\n`;
+            info += `  Unique transform_ids: ${transformIds.size} (${[...transformIds].slice(0, 10).join(', ')}${transformIds.size > 10 ? '...' : ''})\n`;
+            info += `  Unique effect_ids: ${effectIds.size} (${[...effectIds].join(', ')})\n`;
+            info += `  Unique clip_ids: ${clipIds.size} (${[...clipIds].slice(0, 10).join(', ')}${clipIds.size > 10 ? '...' : ''})\n`;
+
+            // Show effects with opacity < 1
+            info += `\n--- Effects with Opacity < 1.0 ---\n`;
+            for (const effectId of effectIds) {
+                const effect = propertyTrees.getEffect(effectId);
+                if (effect && effect.opacity < 1.0) {
+                    info += `  effect_id ${effectId}: opacity=${effect.opacity}, blend_mode=${effect.blend_mode}\n`;
+                }
+            }
+
+            // Show first few ops
+            info += `\n--- First 20 Paint Ops ---\n`;
+            for (let i = 0; i < Math.min(20, paintOps.length); i++) {
+                const op = paintOps[i];
+                let opInfo = `${i}: ${op.type}`;
+                if (op.rect) opInfo += ` rect=[${op.rect.map(v => Math.round(v)).join(',')}]`;
+                opInfo += ` t=${op.transform_id} e=${op.effect_id} c=${op.clip_id}`;
+                info += `  ${opInfo}\n`;
+            }
+            if (paintOps.length > 20) {
+                info += `  ... and ${paintOps.length - 20} more ops\n`;
+            }
+
+            if (log.length > 0) {
+                info += `\nDebug log:\n${log.join('\n')}`;
+            }
+
+            layerListEl.textContent = info;
+        };
+
+        redraw();
+        statusEl.textContent = `Rendered ${paintOps.length} paint ops successfully (flat list, no chunks).`;
+
+        // 6. Bind controls
+        document.querySelectorAll('input').forEach(el => {
+            el.addEventListener('change', redraw);
+        });
+
+    } catch (e) {
+        console.error(e);
+        statusEl.innerHTML = `<span class="error">${e.message}</span><br><br>Make sure <b>raw_paint_ops.json</b> exists in the same folder.`;
+    }
+}
+
+main();
+
+</script>
+</body>
+</html>

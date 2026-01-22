@@ -3,3 +3,4 @@ backup.patch
 output
 skia/
 chromium/
+!skia_paint/chromium/

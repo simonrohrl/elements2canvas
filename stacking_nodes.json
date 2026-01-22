@@ -323,41 +323,6 @@
                "id": 88,
                "name": "LayoutBlockFlow (positioned, children-inline) DIV class='image-label'.image-label",
                "z_index": 0
-            },
-            {
-               "id": 91,
-               "name": "LayoutImage IMG",
-               "z_index": 0
-            },
-            {
-               "id": 93,
-               "name": "LayoutImage IMG",
-               "z_index": 0
-            },
-            {
-               "id": 95,
-               "name": "LayoutImage IMG",
-               "z_index": 0
-            },
-            {
-               "id": 97,
-               "name": "LayoutImage IMG",
-               "z_index": 0
-            },
-            {
-               "id": 99,
-               "name": "LayoutImage IMG",
-               "z_index": 0
-            },
-            {
-               "id": 104,
-               "name": "LayoutSVGRoot (block) svg class='svg-icon svg-colored svg-with-shadow'.svg-icon.svg-colored.svg-with-shadow",
-               "z_index": 0
-            },
-            {
-               "id": 105,
-               "name": "LayoutSVGRoot (block) svg class='svg-icon svg-colored svg-rotate'.svg-icon.svg-colored.svg-rotate",
-               "z_index": 0
             }
          ]
       },
