@@ -1,0 +1,581 @@
+diff --git a/cc/paint/draw_looper.h b/cc/paint/draw_looper.h
+index c04a907ff8..5c977caf3e 100644
+--- a/cc/paint/draw_looper.h
++++ b/cc/paint/draw_looper.h
+@@ -36,6 +36,18 @@ class CC_PAINT_EXPORT DrawLooper : public SkRefCnt {
+     kDontModifyPaintFlag = 1 << 2,
+   };
+ 
++  // Layer struct (moved to public for JSON serialization access)
++  struct Layer {
++    SkPoint offset;
++    float blur_sigma;
++    SkColor4f color;
++    uint32_t flags;
++
++    bool operator==(const Layer& other) const = default;
++
++    void Apply(SkCanvas* canvas, SkPaint* paint) const;
++  };
++
+   ~DrawLooper() override;
+ 
+   //  The callback will be invoked for each "layer" in the looper, each time
+@@ -64,6 +76,9 @@ class CC_PAINT_EXPORT DrawLooper : public SkRefCnt {
+ 
+   bool EqualsForTesting(const DrawLooper& other) const;
+ 
++  // Public accessor for JSON serialization
++  const std::vector<Layer>& GetLayers() const { return layers_; }
++
+  private:
+   // Keep this in sync with the fields in Flags
+   // Used to mask out illegal bits when constructing Layer
+@@ -72,16 +87,6 @@ class CC_PAINT_EXPORT DrawLooper : public SkRefCnt {
+         kPostTransformFlag | kOverrideAlphaFlag | kDontModifyPaintFlag,
+   };
+ 
+-  struct Layer {
+-    SkPoint offset;
+-    float blur_sigma;
+-    SkColor4f color;
+-    uint32_t flags;
+-
+-    bool operator==(const Layer& other) const = default;
+-
+-    void Apply(SkCanvas* canvas, SkPaint* paint) const;
+-  };
+   std::vector<Layer> layers_;
+ 
+   explicit DrawLooper(std::vector<Layer> l);
+diff --git a/cc/paint/paint_shader.h b/cc/paint/paint_shader.h
+index 29dc5c26dd..a05249db60 100644
+--- a/cc/paint/paint_shader.h
++++ b/cc/paint/paint_shader.h
+@@ -196,6 +196,17 @@ class CC_PAINT_EXPORT PaintShader : public SkRefCnt {
+   SkTileMode ty() const { return ty_; }
+   SkRect tile() const { return tile_; }
+ 
++  // Gradient accessors for serialization
++  const std::vector<SkColor4f>& colors() const { return colors_; }
++  const std::vector<SkScalar>& positions() const { return positions_; }
++  SkPoint start_point() const { return start_point_; }
++  SkPoint end_point() const { return end_point_; }
++  SkPoint center() const { return center_; }
++  SkScalar start_radius() const { return start_radius_; }
++  SkScalar end_radius() const { return end_radius_; }
++  SkScalar start_degrees() const { return start_degrees_; }
++  SkScalar end_degrees() const { return end_degrees_; }
++
+   bool IsOpaque() const;
+ 
+   // Returns true if the shader looks like it is valid (ie the members required
+diff --git a/third_party/blink/renderer/platform/graphics/paint/paint_artifact_serializer.h b/third_party/blink/renderer/platform/graphics/paint/paint_artifact_serializer.h
+new file mode 100644
+index 0000000000..771f3c0159
+--- /dev/null
++++ b/third_party/blink/renderer/platform/graphics/paint/paint_artifact_serializer.h
+@@ -0,0 +1,46 @@
++// Copyright 2024 The Chromium Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef THIRD_PARTY_BLINK_RENDERER_PLATFORM_GRAPHICS_PAINT_PAINT_ARTIFACT_SERIALIZER_H_
++#define THIRD_PARTY_BLINK_RENDERER_PLATFORM_GRAPHICS_PAINT_PAINT_ARTIFACT_SERIALIZER_H_
++
++#include <memory>
++
++#include "third_party/blink/renderer/platform/platform_export.h"
++
++namespace blink {
++
++class JSONObject;
++class PaintArtifact;
++
++// Serializes raw paint operations from PaintArtifact WITHOUT chunk grouping.
++// This outputs a flat list of paint ops in paint order, with property tree
++// state attached to each op.
++// Output format:
++// {
++//   "artifact_id": N,           // Unique ID for this paint artifact
++//   "artifact_type": "document" | "svg_image" | "other",
++//   "bounds": [x, y, w, h],     // Bounding box of all paint ops
++//   "paint_ops": [
++//     { "type": "DrawRectOp", "rect": [...], "flags": {...},
++//       "transform_id": N, "clip_id": N, "effect_id": N },
++//     { "type": "DrawTextBlobOp", ... },
++//     ...
++//   ],
++//   "transform_tree": { "nodes": [...] },
++//   "clip_tree": { "nodes": [...] },
++//   "effect_tree": { "nodes": [...] }
++// }
++// artifact_type helps identify:
++//   - "document": Main HTML document (likely the largest)
++//   - "svg_image": SVG image loaded via <img> or data: URI
++//   - "other": Other paint contexts (compositor overlays, etc.)
++PLATFORM_EXPORT std::unique_ptr<JSONObject> SerializeRawPaintOps(
++    const PaintArtifact& artifact,
++    int artifact_id = -1,
++    const char* artifact_type = nullptr);
++
++}  // namespace blink
++
++#endif  // THIRD_PARTY_BLINK_RENDERER_PLATFORM_GRAPHICS_PAINT_PAINT_ARTIFACT_SERIALIZER_H_
+diff --git a/third_party/blink/renderer/platform/graphics/paint/paint_controller.cc b/third_party/blink/renderer/platform/graphics/paint/paint_controller.cc
+index e043c1a98d..a975b0c68a 100644
+--- a/third_party/blink/renderer/platform/graphics/paint/paint_controller.cc
++++ b/third_party/blink/renderer/platform/graphics/paint/paint_controller.cc
+@@ -12,9 +12,11 @@
+ #include "cc/paint/paint_op.h"
+ #include "third_party/blink/renderer/platform/graphics/paint/drawing_display_item.h"
+ #include "third_party/blink/renderer/platform/graphics/paint/ignore_paint_timing_scope.h"
++#include "third_party/blink/renderer/platform/graphics/paint/paint_artifact_serializer.h"
+ #include "third_party/blink/renderer/platform/graphics/paint/paint_chunk_subset.h"
+ #include "third_party/blink/renderer/platform/graphics/paint/paint_under_invalidation_checker.h"
+ #include "third_party/blink/renderer/platform/instrumentation/tracing/trace_event.h"
++#include "third_party/blink/renderer/platform/json/json_values.h"
+ #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
+ #include "third_party/blink/renderer/platform/wtf/text/string_builder_stream.h"
+ #include "third_party/skia/include/core/SkTextBlob.h"
+@@ -819,6 +821,8 @@ void PaintController::AppendSubsequenceByMoving(const DisplayItemClient& client,
+ #endif
+ }
+ 
++// No longer using a simple counter - we use PaintController address for stable IDs
++
+ DISABLE_CFI_PERF
+ const PaintArtifact& PaintController::CommitNewDisplayItems() {
+   TRACE_EVENT2(
+@@ -837,6 +841,19 @@ const PaintArtifact& PaintController::CommitNewDisplayItems() {
+   paint_chunker_.Finish();
+ 
+   PaintArtifact& paint_artifact = *new_paint_artifact_;
++
++  // Log raw paint ops in JSON format for debugging/analysis.
++  // This captures paint data at the earliest point after paint chunks are
++  // finalized, before any compositing decisions are made.
++  // Determine artifact type based on heuristics:
++  // - Main documents typically have persistent_data_ and many paint ops
++  // - SVG images (from data: URIs) typically don't have persistent_data_
++  const char* artifact_type = persistent_data_ ? "document" : "svg_image";
++  // Use PaintController address as stable ID - same document gets same ID across paint passes
++  int artifact_id = static_cast<int>(reinterpret_cast<uintptr_t>(this) & 0xFFFFFF);
++  auto raw_paint_ops_json = SerializeRawPaintOps(paint_artifact, artifact_id, artifact_type);
++  LOG(ERROR) << "RAW_PAINT_OPS: " << raw_paint_ops_json->ToJSONString().Utf8();
++
+   // Any new paint operation will crash on nullptr.
+   new_paint_artifact_ = nullptr;
+   if (persistent_data_) {
+diff --git a/third_party/blink/renderer/platform/graphics/paint/property_tree_serializer.cc b/third_party/blink/renderer/platform/graphics/paint/property_tree_serializer.cc
+new file mode 100644
+index 0000000000..509a35a0ca
+--- /dev/null
++++ b/third_party/blink/renderer/platform/graphics/paint/property_tree_serializer.cc
+@@ -0,0 +1,405 @@
++// Copyright 2024 The Chromium Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "third_party/blink/renderer/platform/graphics/paint/property_tree_serializer.h"
++
++#include <algorithm>
++#include <vector>
++
++#include "cc/paint/filter_operation.h"
++#include "third_party/blink/renderer/platform/graphics/compositor_filter_operations.h"
++#include "third_party/blink/renderer/platform/json/json_values.h"
++#include "third_party/blink/renderer/platform/geometry/path.h"
++#include "third_party/skia/include/core/SkBlendMode.h"
++#include "third_party/skia/include/core/SkPath.h"
++#include "third_party/skia/include/utils/SkParsePath.h"
++#include "ui/gfx/geometry/rect_f.h"
++#include "ui/gfx/geometry/transform.h"
++#include "ui/gfx/geometry/vector2d_f.h"
++
++namespace blink {
++
++// PropertyTreeIdMapper implementation
++
++int PropertyTreeIdMapper::GetOrAssignTransformId(
++    const TransformPaintPropertyNode* node) {
++  if (!node) {
++    return -1;
++  }
++  const void* key = static_cast<const void*>(node);
++  auto it = transform_ids_.find(key);
++  if (it != transform_ids_.end()) {
++    return it->second;
++  }
++  // First assign IDs to parents
++  if (auto* parent = node->UnaliasedParent()) {
++    GetOrAssignTransformId(parent);
++  }
++  int id = next_transform_id_++;
++  transform_ids_[key] = id;
++  return id;
++}
++
++int PropertyTreeIdMapper::GetOrAssignClipId(const ClipPaintPropertyNode* node) {
++  if (!node) {
++    return -1;
++  }
++  const void* key = static_cast<const void*>(node);
++  auto it = clip_ids_.find(key);
++  if (it != clip_ids_.end()) {
++    return it->second;
++  }
++  // First assign IDs to parents
++  if (auto* parent = node->UnaliasedParent()) {
++    GetOrAssignClipId(parent);
++  }
++  int id = next_clip_id_++;
++  clip_ids_[key] = id;
++  return id;
++}
++
++int PropertyTreeIdMapper::GetOrAssignEffectId(
++    const EffectPaintPropertyNode* node) {
++  if (!node) {
++    return -1;
++  }
++  const void* key = static_cast<const void*>(node);
++  auto it = effect_ids_.find(key);
++  if (it != effect_ids_.end()) {
++    return it->second;
++  }
++  // First assign IDs to parents
++  if (auto* parent = node->UnaliasedParent()) {
++    GetOrAssignEffectId(parent);
++  }
++  int id = next_effect_id_++;
++  effect_ids_[key] = id;
++  return id;
++}
++
++// Helper to serialize gfx::Transform to JSON array (row-major 4x4 matrix)
++namespace {
++
++std::unique_ptr<JSONArray> SerializeTransformMatrix(
++    const gfx::Transform& transform) {
++  auto json = std::make_unique<JSONArray>();
++  for (int row = 0; row < 4; ++row) {
++    for (int col = 0; col < 4; ++col) {
++      json->PushDouble(transform.rc(row, col));
++    }
++  }
++  return json;
++}
++
++std::unique_ptr<JSONArray> SerializeRectF(const gfx::RectF& rect) {
++  auto json = std::make_unique<JSONArray>();
++  json->PushDouble(rect.x());
++  json->PushDouble(rect.y());
++  json->PushDouble(rect.width());
++  json->PushDouble(rect.height());
++  return json;
++}
++
++}  // namespace
++
++std::unique_ptr<JSONObject> SerializeTransformTree(
++    const std::unordered_map<const void*, int>& node_ids) {
++  auto json = std::make_unique<JSONObject>();
++  auto nodes_array = std::make_unique<JSONArray>();
++
++  // Sort by ID for consistent output
++  std::vector<std::pair<int, const void*>> sorted_nodes;
++  for (const auto& entry : node_ids) {
++    sorted_nodes.push_back({entry.second, entry.first});
++  }
++  std::sort(sorted_nodes.begin(), sorted_nodes.end(),
++            [](const auto& a, const auto& b) { return a.first < b.first; });
++
++  for (const auto& entry : sorted_nodes) {
++    int id = entry.first;
++    const auto* node =
++        static_cast<const TransformPaintPropertyNode*>(entry.second);
++
++    auto node_json = std::make_unique<JSONObject>();
++    node_json->SetInteger("id", id);
++
++    // Parent ID
++    if (auto* parent = node->UnaliasedParent()) {
++      const void* parent_key = static_cast<const void*>(parent);
++      auto parent_it = node_ids.find(parent_key);
++      node_json->SetInteger(
++          "parent_id", parent_it != node_ids.end() ? parent_it->second : -1);
++    } else {
++      node_json->SetInteger("parent_id", -1);
++    }
++
++    // Transform matrix
++    if (node->IsIdentityOr2dTranslation()) {
++      gfx::Vector2dF translation = node->Get2dTranslation();
++      if (!translation.IsZero()) {
++        auto translation_array = std::make_unique<JSONArray>();
++        translation_array->PushDouble(translation.x());
++        translation_array->PushDouble(translation.y());
++        node_json->SetArray("translation2d", std::move(translation_array));
++      }
++    } else {
++      node_json->SetArray("matrix", SerializeTransformMatrix(node->Matrix()));
++    }
++
++    // Transform origin (CSS transform-origin)
++    const gfx::Point3F& origin = node->Origin();
++    if (origin.x() != 0 || origin.y() != 0 || origin.z() != 0) {
++      auto origin_array = std::make_unique<JSONArray>();
++      origin_array->PushDouble(origin.x());
++      origin_array->PushDouble(origin.y());
++      origin_array->PushDouble(origin.z());
++      node_json->SetArray("origin", std::move(origin_array));
++    }
++    
++    // Backface visibility (CSS backface-visibility: hidden)
++    if (node->IsBackfaceHidden()) {
++      node_json->SetBoolean("backface_hidden", true);
++    }
++
++    nodes_array->PushObject(std::move(node_json));
++  }
++
++  json->SetArray("nodes", std::move(nodes_array));
++  return json;
++}
++
++std::unique_ptr<JSONObject> SerializeClipTree(
++    const std::unordered_map<const void*, int>& node_ids) {
++  auto json = std::make_unique<JSONObject>();
++  auto nodes_array = std::make_unique<JSONArray>();
++
++  // Sort by ID for consistent output
++  std::vector<std::pair<int, const void*>> sorted_nodes;
++  for (const auto& entry : node_ids) {
++    sorted_nodes.push_back({entry.second, entry.first});
++  }
++  std::sort(sorted_nodes.begin(), sorted_nodes.end(),
++            [](const auto& a, const auto& b) { return a.first < b.first; });
++
++  for (const auto& entry : sorted_nodes) {
++    int id = entry.first;
++    const auto* node = static_cast<const ClipPaintPropertyNode*>(entry.second);
++
++    auto node_json = std::make_unique<JSONObject>();
++    node_json->SetInteger("id", id);
++
++    // Parent ID
++    if (auto* parent = node->UnaliasedParent()) {
++      const void* parent_key = static_cast<const void*>(parent);
++      auto parent_it = node_ids.find(parent_key);
++      node_json->SetInteger(
++          "parent_id", parent_it != node_ids.end() ? parent_it->second : -1);
++    } else {
++      node_json->SetInteger("parent_id", -1);
++    }
++
++    // Clip rect
++    node_json->SetArray("clip_rect",
++                        SerializeRectF(node->PaintClipRect().Rect()));
++
++    // Clip path (for CSS clip-path: polygon(), etc.)
++    if (node->ClipPath().has_value()) {
++      const Path& clip_path = node->ClipPath().value();
++      const SkPath& sk_path = clip_path.GetSkPath();
++      SkString path_str = SkParsePath::ToSVGString(sk_path);
++      node_json->SetString("clip_path", path_str.c_str());
++    }
++
++    nodes_array->PushObject(std::move(node_json));
++  }
++
++  json->SetArray("nodes", std::move(nodes_array));
++  return json;
++}
++
++std::unique_ptr<JSONObject> SerializeEffectTree(
++    const std::unordered_map<const void*, int>& node_ids) {
++  auto json = std::make_unique<JSONObject>();
++  auto nodes_array = std::make_unique<JSONArray>();
++
++  // Sort by ID for consistent output
++  std::vector<std::pair<int, const void*>> sorted_nodes;
++  for (const auto& entry : node_ids) {
++    sorted_nodes.push_back({entry.second, entry.first});
++  }
++  std::sort(sorted_nodes.begin(), sorted_nodes.end(),
++            [](const auto& a, const auto& b) { return a.first < b.first; });
++
++  for (const auto& entry : sorted_nodes) {
++    int id = entry.first;
++    const auto* node =
++        static_cast<const EffectPaintPropertyNode*>(entry.second);
++
++    auto node_json = std::make_unique<JSONObject>();
++    node_json->SetInteger("id", id);
++
++    // Parent ID
++    if (auto* parent = node->UnaliasedParent()) {
++      const void* parent_key = static_cast<const void*>(parent);
++      auto parent_it = node_ids.find(parent_key);
++      node_json->SetInteger(
++          "parent_id", parent_it != node_ids.end() ? parent_it->second : -1);
++    } else {
++      node_json->SetInteger("parent_id", -1);
++    }
++
++    // Opacity
++    node_json->SetDouble("opacity", node->Opacity());
++
++    // Blend mode
++    node_json->SetString("blend_mode", SkBlendMode_Name(node->BlendMode()));
++
++      // Filter (CSS filter property)
++    if (const auto* filter = node->Filter()) {
++      const auto& cc_filter = filter->AsCcFilterOperations();
++      if (!cc_filter.IsEmpty()) {
++        auto filter_array = std::make_unique<JSONArray>();
++        for (const auto& op : cc_filter.operations()) {
++          auto op_json = std::make_unique<JSONObject>();
++          switch (op.type()) {
++            case cc::FilterOperation::BLUR:
++              op_json->SetString("type", "blur");
++              op_json->SetDouble("amount", op.amount());
++              break;
++            case cc::FilterOperation::GRAYSCALE:
++              op_json->SetString("type", "grayscale");
++              op_json->SetDouble("amount", op.amount());
++              break;
++            case cc::FilterOperation::SEPIA:
++              op_json->SetString("type", "sepia");
++              op_json->SetDouble("amount", op.amount());
++              break;
++            case cc::FilterOperation::SATURATE:
++              op_json->SetString("type", "saturate");
++              op_json->SetDouble("amount", op.amount());
++              break;
++            case cc::FilterOperation::HUE_ROTATE:
++              op_json->SetString("type", "hue_rotate");
++              op_json->SetDouble("amount", op.amount());
++              break;
++            case cc::FilterOperation::INVERT:
++              op_json->SetString("type", "invert");
++              op_json->SetDouble("amount", op.amount());
++              break;
++            case cc::FilterOperation::BRIGHTNESS:
++              op_json->SetString("type", "brightness");
++              op_json->SetDouble("amount", op.amount());
++              break;
++            case cc::FilterOperation::CONTRAST:
++              op_json->SetString("type", "contrast");
++              op_json->SetDouble("amount", op.amount());
++              break;
++            case cc::FilterOperation::OPACITY:
++              op_json->SetString("type", "opacity");
++              op_json->SetDouble("amount", op.amount());
++              break;
++            case cc::FilterOperation::DROP_SHADOW: {
++              op_json->SetString("type", "drop_shadow");
++              op_json->SetDouble("std_deviation", op.amount());
++              auto offset_array = std::make_unique<JSONArray>();
++              offset_array->PushDouble(op.offset().x());
++              offset_array->PushDouble(op.offset().y());
++              op_json->SetArray("offset", std::move(offset_array));
++              const auto& color = op.drop_shadow_color();
++              auto color_array = std::make_unique<JSONArray>();
++              color_array->PushDouble(color.fR);
++              color_array->PushDouble(color.fG);
++              color_array->PushDouble(color.fB);
++              color_array->PushDouble(color.fA);
++              op_json->SetArray("color", std::move(color_array));
++              break;
++            }
++            default:
++              op_json->SetString("type", "unknown");
++              break;
++          }
++          filter_array->PushObject(std::move(op_json));
++        }
++        node_json->SetArray("filter", std::move(filter_array));
++      }
++    }
++  
++    // Backdrop filter (CSS backdrop-filter property)
++    if (const auto* backdrop_filter = node->BackdropFilter()) {
++      const auto& cc_filter = backdrop_filter->AsCcFilterOperations();
++      if (!cc_filter.IsEmpty()) {
++        auto filter_array = std::make_unique<JSONArray>();
++        for (const auto& op : cc_filter.operations()) {
++          auto op_json = std::make_unique<JSONObject>();
++          switch (op.type()) {
++            case cc::FilterOperation::BLUR:
++              op_json->SetString("type", "blur");
++              op_json->SetDouble("amount", op.amount());
++              break;
++            case cc::FilterOperation::GRAYSCALE:
++              op_json->SetString("type", "grayscale");
++              op_json->SetDouble("amount", op.amount());
++              break;
++            case cc::FilterOperation::SEPIA:
++              op_json->SetString("type", "sepia");
++              op_json->SetDouble("amount", op.amount());
++              break;
++            case cc::FilterOperation::SATURATE:
++              op_json->SetString("type", "saturate");
++              op_json->SetDouble("amount", op.amount());
++              break;
++            case cc::FilterOperation::HUE_ROTATE:
++              op_json->SetString("type", "hue_rotate");
++              op_json->SetDouble("amount", op.amount());
++              break;
++            case cc::FilterOperation::INVERT:
++              op_json->SetString("type", "invert");
++              op_json->SetDouble("amount", op.amount());
++              break;
++            case cc::FilterOperation::BRIGHTNESS:
++              op_json->SetString("type", "brightness");
++              op_json->SetDouble("amount", op.amount());
++              break;
++            case cc::FilterOperation::CONTRAST:
++              op_json->SetString("type", "contrast");
++              op_json->SetDouble("amount", op.amount());
++              break;
++            case cc::FilterOperation::OPACITY:
++              op_json->SetString("type", "opacity");
++              op_json->SetDouble("amount", op.amount());
++              break;
++            case cc::FilterOperation::DROP_SHADOW: {
++              op_json->SetString("type", "drop_shadow");
++              op_json->SetDouble("std_deviation", op.amount());
++              auto offset_array = std::make_unique<JSONArray>();
++              offset_array->PushDouble(op.offset().x());
++              offset_array->PushDouble(op.offset().y());
++              op_json->SetArray("offset", std::move(offset_array));
++              const auto& color = op.drop_shadow_color();
++              auto color_array = std::make_unique<JSONArray>();
++              color_array->PushDouble(color.fR);
++              color_array->PushDouble(color.fG);
++              color_array->PushDouble(color.fB);
++              color_array->PushDouble(color.fA);
++              op_json->SetArray("color", std::move(color_array));
++              break;
++            }
++            default:
++              op_json->SetString("type", "unknown");
++              break;
++          }
++          filter_array->PushObject(std::move(op_json));
++        }
++        node_json->SetArray("backdrop_filter", std::move(filter_array));
++      }
++    }
++
++    nodes_array->PushObject(std::move(node_json));
++  }
++
++  json->SetArray("nodes", std::move(nodes_array));
++  return json;
++}
++
++}  // namespace blink
+\ No newline at end of file

@@ -1,22 +1,28 @@
 CXX = clang++
-CXXFLAGS = -std=c++17 -Wall -Wextra -I.
+CXXFLAGS = -std=c++17 -Wall -Wextra -Isrc
 
-SRCS = main.cc block_painter.cc json_parser.cc
-OBJS = $(SRCS:.cc=.o)
-TARGET = block_painter
+SRCDIR = src
+BUILDDIR = build
+
+SRCS = $(SRCDIR)/main.cc $(SRCDIR)/block_painter.cc $(SRCDIR)/json_parser.cc
+OBJS = $(patsubst $(SRCDIR)/%.cc,$(BUILDDIR)/%.o,$(SRCS))
+TARGET = $(BUILDDIR)/block_painter
 
 all: $(TARGET)
+
+$(BUILDDIR):
+	mkdir -p $(BUILDDIR)
 
 $(TARGET): $(OBJS)
 	$(CXX) $(CXXFLAGS) -o $@ $^
 
-%.o: %.cc
+$(BUILDDIR)/%.o: $(SRCDIR)/%.cc | $(BUILDDIR)
 	$(CXX) $(CXXFLAGS) -c -o $@ $<
 
 clean:
-	rm -f $(OBJS) $(TARGET)
+	rm -rf $(BUILDDIR)
 
 run: $(TARGET)
-	./$(TARGET) -i input.json
+	./$(TARGET) -i test/input.json
 
 .PHONY: all clean run

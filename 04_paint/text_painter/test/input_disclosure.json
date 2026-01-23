@@ -1,0 +1,49 @@
+{
+  "fragment": {
+    "text": "",
+    "from": 0,
+    "to": 0,
+    "shape_result": {
+      "bounds": { "x": 0, "y": 0, "width": 0, "height": 0 },
+      "runs": []
+    }
+  },
+
+  "box": {
+    "x": 20.0,
+    "y": 200.0,
+    "width": 16.0,
+    "height": 16.0
+  },
+
+  "style": {
+    "fill_color": "#ff333333",
+    "stroke_color": "#ff333333",
+    "stroke_width": 0.0,
+    "emphasis_mark_color": "#ff333333",
+    "current_color": "#ff333333",
+    "color_scheme": "light",
+    "paint_order": "normal"
+  },
+
+  "symbol_marker": {
+    "type": "disclosure-open",
+    "rect": {
+      "x": 20.0,
+      "y": 200.0,
+      "width": 16.0,
+      "height": 16.0
+    },
+    "color": "#ff333333"
+  },
+
+  "paint_phase": "foreground",
+  "visibility": "visible",
+  "node_id": 999,
+
+  "state_ids": {
+    "transform_id": 1,
+    "clip_id": 1,
+    "effect_id": 1
+  }
+}

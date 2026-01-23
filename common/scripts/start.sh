@@ -16,7 +16,8 @@ if [ -n "$DURATION" ]; then
     echo "Running Chromium for $DURATION seconds..."
     ./chromium/src/out/Default/Chromium.app/Contents/MacOS/Chromium \
         --user-data-dir="$TEMP_PROFILE" \
-        http://localhost:8000/skia_paint/reference.html 2> output &
+        --load-extension="$PROJECT_DIR/extension" \
+        http://localhost:8000/common/reference/reference.html 2> output &
     CHROMIUM_PID=$!
     sleep "$DURATION"
     echo "Stopping Chromium..."
@@ -26,7 +27,8 @@ else
     # Interactive mode: wait for user to close browser
     ./chromium/src/out/Default/Chromium.app/Contents/MacOS/Chromium \
         --user-data-dir="$TEMP_PROFILE" \
-        http://localhost:8000/skia_paint/reference.html 2> output
+        --load-extension="$PROJECT_DIR/extension" \
+        http://localhost:8000/common/reference/reference.html 2> output
 fi
 
 # Copy debug log to project directory before cleanup

@@ -9,6 +9,9 @@
 
 EMCC = emcc
 
+SRCDIR = src
+BUILDDIR = build
+
 # Emscripten flags
 EMFLAGS = -std=c++17 -O2 \
           -s WASM=1 \
@@ -18,20 +21,24 @@ EMFLAGS = -std=c++17 -O2 \
           -s EXPORTED_RUNTIME_METHODS='["ccall", "cwrap", "UTF8ToString", "stringToUTF8", "lengthBytesUTF8"]' \
           -s ALLOW_MEMORY_GROWTH=1 \
           -s ENVIRONMENT='web' \
-          -I.
+          -I$(SRCDIR)
 
 # Debug build (uncomment for debugging)
 # EMFLAGS += -g -s ASSERTIONS=1
 
 # Source files (excluding main.cc, using main_wasm.cc instead)
-SRCS = main_wasm.cc text_painter.cc json_parser.cc \
-       decoration_line_painter.cc text_decoration_info.cc text_decoration_painter.cc
+SRCS = $(SRCDIR)/main_wasm.cc $(SRCDIR)/text_painter.cc $(SRCDIR)/json_parser.cc \
+       $(SRCDIR)/decoration_line_painter.cc $(SRCDIR)/text_decoration_info.cc \
+       $(SRCDIR)/text_decoration_painter.cc
 
 # Output files
-TARGET = text_painter.js
-TARGET_WASM = text_painter.wasm
+TARGET = $(BUILDDIR)/text_painter.js
+TARGET_WASM = $(BUILDDIR)/text_painter.wasm
 
-all: $(TARGET)
+all: $(BUILDDIR) $(TARGET)
+
+$(BUILDDIR):
+	mkdir -p $(BUILDDIR)
 
 $(TARGET): $(SRCS)
 	$(EMCC) $(EMFLAGS) -o $@ $^

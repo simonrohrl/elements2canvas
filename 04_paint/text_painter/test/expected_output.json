@@ -1,0 +1,44 @@
+[
+  {
+    "type": "DrawTextBlobOp",
+    "x": 100,
+    "y": 214,
+    "nodeId": 123,
+    "flags": {
+      "r": 0,
+      "g": 0,
+      "b": 0,
+      "a": 1,
+      "style": 0,
+      "strokeWidth": 0
+    },
+    "bounds": [0, -14, 82.5, 4],
+    "runs": [
+      {
+        "glyphCount": 11,
+        "glyphs": [43, 72, 79, 79, 82, 3, 58, 82, 85, 79, 71],
+        "positioning": 1,
+        "offsetX": 0,
+        "offsetY": 0,
+        "positions": [0, 10.5, 18.2, 25.9, 33.6, 41.3, 45.8, 56.3, 66.8, 74.5, 82.2],
+        "font": {
+          "size": 16,
+          "scaleX": 1,
+          "skewX": 0,
+          "embolden": false,
+          "linearMetrics": true,
+          "subpixel": true,
+          "forceAutoHinting": false,
+          "family": "Arial",
+          "typefaceId": 27,
+          "weight": 400,
+          "width": 5,
+          "slant": 0
+        }
+      }
+    ],
+    "transform_id": 5,
+    "clip_id": 26,
+    "effect_id": 1
+  }
+]
