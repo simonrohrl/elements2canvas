@@ -1,0 +1,22 @@
+diff --git a/third_party/blink/renderer/platform/BUILD.gn b/third_party/blink/renderer/platform/BUILD.gn
+index e2256766d7..dd2bfae61d 100644
+--- a/third_party/blink/renderer/platform/BUILD.gn
++++ b/third_party/blink/renderer/platform/BUILD.gn
+@@ -1154,6 +1154,8 @@ component("platform") {
+     "graphics/paint/paint_artifact.h",
+     "graphics/paint/paint_canvas.h",
+     "graphics/paint/paint_chunk.cc",
++    "graphics/paint/paint_artifact_serializer.cc",
++    "graphics/paint/paint_artifact_serializer.h",
+     "graphics/paint/paint_chunk.h",
+     "graphics/paint/paint_chunk_subset.cc",
+     "graphics/paint/paint_chunk_subset.h",
+@@ -1173,6 +1175,8 @@ component("platform") {
+     "graphics/paint/paint_under_invalidation_checker.cc",
+     "graphics/paint/paint_under_invalidation_checker.h",
+     "graphics/paint/painted_selection_bound.h",
++    "graphics/paint/property_tree_serializer.cc",
++    "graphics/paint/property_tree_serializer.h",
+     "graphics/paint/property_tree_state.cc",
+     "graphics/paint/property_tree_state.h",
+     "graphics/paint/raster_invalidation_tracking.cc",

@@ -2,5 +2,9 @@ depot_tools/
 backup.patch
 output
 skia/
-chromium/
-!skia_paint/chromium/
+chromium
+!01_layout/chromium
+!02_shape/chromium
+!03_layer/chromium
+!04_paint/chromium
+!05_draw/chromium

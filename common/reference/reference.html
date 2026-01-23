@@ -1,0 +1,2456 @@
+<style>
+    @font-face {
+        font-family: Arial;
+        src: url("../Arial.ttf");
+    }
+    body {
+        margin: 20px;
+        background: #f0f0f0;
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+    }
+
+    * {
+        font-family: Arial;
+    }
+
+    /* Card with shadow and rounded corners */
+    .card {
+        background: white;
+        border-radius: 12px;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 1);
+        padding: 20px;
+        margin-bottom: 20px;
+        max-width: 400px;
+    }
+
+    /* Transformed container */
+    .transformed-box {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 15px;
+        border-radius: 8px;
+        transform: rotate(-15deg) scale(1.2);
+        margin: 10px 0;
+    }
+
+    /* Semi-transparent overlay */
+    .overlay-container {
+        position: relative;
+        background: #3498db;
+        padding: 30px;
+        border-radius: 8px;
+        margin: 15px 0;
+    }
+    .overlay {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(255, 255, 255, 0.3);
+        border-radius: 8px;
+        pointer-events: none;
+    }
+
+    /* Clipped element */
+    .clipped {
+        background: #e74c3c;
+        color: white;
+        padding: 20px;
+        clip-path: polygon(10% 0%, 100% 0%, 90% 100%, 0% 100%);
+        margin: 15px 0;
+    }
+
+    /* Nested transforms */
+    .outer-transform {
+        transform: perspective(500px) rotateY(5deg);
+        padding: 10px;
+        background: #ecf0f1;
+        border-radius: 8px;
+        margin: 15px 0;
+    }
+    .inner-transform {
+        transform: translateX(10px) skewX(-3deg);
+        background: #9b59b6;
+        color: white;
+        padding: 15px;
+        border-radius: 4px;
+    }
+
+    /* Form elements */
+    .form-group {
+        margin: 12px 0;
+    }
+    .form-group label {
+        display: block;
+        margin-bottom: 5px;
+        font-weight: bold;
+        color: #333;
+    }
+    .form-group input[type="text"],
+    .form-group input[type="email"],
+    .form-group input[type="password"] {
+        width: 100%;
+        padding: 10px;
+        border: 2px solid #ddd;
+        border-radius: 6px;
+        font-size: 14px;
+        box-sizing: border-box;
+    }
+    .form-group input:focus {
+        border-color: #3498db;
+        outline: none;
+    }
+    .form-group textarea {
+        width: 100%;
+        padding: 10px;
+        border: 2px solid #ddd;
+        border-radius: 6px;
+        font-size: 14px;
+        min-height: 80px;
+        box-sizing: border-box;
+        resize: vertical;
+    }
+
+    /* Checkbox and radio styling */
+    .checkbox-group {
+        display: flex;
+        gap: 15px;
+        margin: 10px 0;
+    }
+    .checkbox-group label {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        cursor: pointer;
+    }
+
+    /* Buttons with different styles */
+    .button-row {
+        display: flex;
+        gap: 10px;
+        margin: 15px 0;
+        flex-wrap: wrap;
+    }
+    .btn {
+        padding: 10px 20px;
+        border: none;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 14px;
+        transition: transform 0.2s;
+    }
+    .btn-primary {
+        background: #3498db;
+        color: white;
+    }
+    .btn-success {
+        background: #27ae60;
+        color: white;
+    }
+    .btn-warning {
+        background: #f39c12;
+        color: white;
+    }
+    .btn-danger {
+        background: #e74c3c;
+        color: white;
+    }
+    .btn-outline {
+        background: transparent;
+        border: 2px solid #3498db;
+        color: #3498db;
+    }
+
+    /* Opacity variations */
+    .opacity-demo {
+        display: flex;
+        gap: 10px;
+        margin: 15px 0;
+    }
+    .opacity-box {
+        width: 60px;
+        height: 60px;
+        background: #2c3e50;
+        border-radius: 8px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-size: 12px;
+    }
+
+    /* Nested rounded borders */
+    .nested-rounded {
+        background: #1abc9c;
+        border-radius: 16px;
+        padding: 15px;
+        margin: 15px 0;
+    }
+    .nested-rounded .inner {
+        background: rgba(255, 255, 255, 0.9);
+        border-radius: 10px;
+        padding: 12px;
+        color: #333;
+    }
+    .nested-rounded .inner .innermost {
+        background: #16a085;
+        color: white;
+        border-radius: 6px;
+        padding: 8px;
+        margin-top: 8px;
+    }
+
+    /* Select dropdown */
+    .form-group select {
+        width: 100%;
+        padding: 10px;
+        border: 2px solid #ddd;
+        border-radius: 6px;
+        font-size: 14px;
+        background: white;
+    }
+
+    /* Range slider */
+    .form-group input[type="range"] {
+        width: 100%;
+    }
+
+    /* Progress-like bar */
+    .progress-bar {
+        background: #ecf0f1;
+        border-radius: 10px;
+        height: 20px;
+        overflow: hidden;
+        margin: 15px 0;
+    }
+    .progress-bar .fill {
+        background: linear-gradient(90deg, #3498db, #2ecc71);
+        height: 100%;
+        width: 65%;
+        border-radius: 10px;
+    }
+
+    /* Badge/tag elements */
+    .tags {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin: 10px 0;
+    }
+    .tag {
+        background: #e8e8e8;
+        padding: 4px 12px;
+        border-radius: 20px;
+        font-size: 12px;
+        color: #555;
+    }
+    .tag.active {
+        background: #3498db;
+        color: white;
+    }
+
+
+    /* Data table */
+    .data-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 15px 0;
+        font-size: 13px;
+    }
+    .data-table th {
+        background: #34495e;
+        color: white;
+        padding: 12px 10px;
+        text-align: left;
+        font-weight: 600;
+    }
+    .data-table th:first-child {
+        border-radius: 6px 0 0 0;
+    }
+    .data-table th:last-child {
+        border-radius: 0 6px 0 0;
+    }
+    .data-table td {
+        padding: 10px;
+        border-bottom: 1px solid #ecf0f1;
+    }
+    .data-table tr:nth-child(even) {
+        background: #f8f9fa;
+    }
+    .data-table tr:hover {
+        background: #e8f4f8;
+    }
+    .status-badge {
+        display: inline-block;
+        padding: 3px 8px;
+        border-radius: 12px;
+        font-size: 11px;
+        font-weight: 600;
+    }
+    .status-active { background: #d4edda; color: #155724; }
+    .status-pending { background: #fff3cd; color: #856404; }
+    .status-inactive { background: #f8d7da; color: #721c24; }
+
+    /* Notification/Alert boxes */
+    .alert {
+        padding: 12px 16px;
+        border-radius: 6px;
+        margin: 10px 0;
+        font-size: 13px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+    .alert-info {
+        background: linear-gradient(90deg, #e3f2fd 0%, #bbdefb 100%);
+        border-left: 4px solid #2196f3;
+        color: #1565c0;
+    }
+    .alert-success {
+        background: linear-gradient(90deg, #e8f5e9 0%, #c8e6c9 100%);
+        border-left: 4px solid #4caf50;
+        color: #2e7d32;
+    }
+    .alert-warning {
+        background: linear-gradient(90deg, #fff8e1 0%, #ffecb3 100%);
+        border-left: 4px solid #ff9800;
+        color: #e65100;
+    }
+    .alert-error {
+        background: linear-gradient(90deg, #ffebee 0%, #ffcdd2 100%);
+        border-left: 4px solid #f44336;
+        color: #c62828;
+    }
+
+    /* Avatar and user info */
+    .user-card {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 12px;
+        background: #f8f9fa;
+        border-radius: 8px;
+        margin: 10px 0;
+    }
+    .avatar {
+        width: 48px;
+        height: 48px;
+        border-radius: 50%;
+        background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-weight: bold;
+        font-size: 18px;
+    }
+    .user-info {
+        flex: 1;
+    }
+    .user-info .name {
+        font-weight: 600;
+        color: #2c3e50;
+        margin-bottom: 2px;
+    }
+    .user-info .role {
+        font-size: 12px;
+        color: #7f8c8d;
+    }
+
+    /* Pricing card */
+    .pricing-card {
+        background: white;
+        border-radius: 12px;
+        padding: 24px;
+        text-align: center;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+        margin: 10px 0;
+        border: 2px solid transparent;
+    }
+    .pricing-card.featured {
+        border-color: #667eea;
+        transform: scale(1.02);
+    }
+    .pricing-card .plan-name {
+        font-size: 14px;
+        color: #7f8c8d;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+    }
+    .pricing-card .price {
+        font-size: 36px;
+        font-weight: bold;
+        color: #2c3e50;
+        margin: 10px 0;
+    }
+    .pricing-card .price span {
+        font-size: 14px;
+        color: #95a5a6;
+        font-weight: normal;
+    }
+    .pricing-card .features {
+        text-align: left;
+        margin: 20px 0;
+        font-size: 13px;
+        color: #555;
+    }
+    .pricing-card .features div {
+        padding: 6px 0;
+        border-bottom: 1px solid #ecf0f1;
+    }
+    /* Tooltip style */
+    .tooltip-demo {
+        position: relative;
+        display: inline-block;
+        padding: 8px 16px;
+        background: #3498db;
+        color: white;
+        border-radius: 4px;
+        margin: 10px 0;
+    }
+    .tooltip-demo::after {
+        content: "This is a tooltip!";
+        position: absolute;
+        bottom: 100%;
+        left: 50%;
+        transform: translateX(-50%);
+        background: #2c3e50;
+        color: white;
+        padding: 6px 12px;
+        border-radius: 4px;
+        font-size: 12px;
+        white-space: nowrap;
+        margin-bottom: 8px;
+    }
+    .tooltip-demo::before {
+        content: "";
+        position: absolute;
+        bottom: 100%;
+        left: 50%;
+        transform: translateX(-50%);
+        border: 6px solid transparent;
+        border-top-color: #2c3e50;
+        margin-bottom: -4px;
+    }
+
+    /* Search box */
+    .search-box {
+        display: flex;
+        gap: 0;
+        margin: 10px 0;
+    }
+    .search-box input {
+        flex: 1;
+        padding: 10px 15px;
+        border: 2px solid #ddd;
+        border-right: none;
+        border-radius: 6px 0 0 6px;
+        font-size: 14px;
+        outline: none;
+    }
+    .search-box input:focus {
+        border-color: #3498db;
+    }
+    .search-box button {
+        padding: 10px 20px;
+        background: #3498db;
+        color: white;
+        border: none;
+        border-radius: 0 6px 6px 0;
+        cursor: pointer;
+        font-size: 14px;
+    }
+
+    /* Tabs */
+    .tabs {
+        display: flex;
+        border-bottom: 2px solid #ecf0f1;
+        margin: 10px 0;
+    }
+    .tabs .tab {
+        padding: 10px 20px;
+        cursor: pointer;
+        color: #7f8c8d;
+        font-size: 14px;
+        border-bottom: 2px solid transparent;
+        margin-bottom: -2px;
+        transition: all 0.2s;
+    }
+    .tabs .tab.active {
+        color: #3498db;
+        border-bottom-color: #3498db;
+    }
+    .tab-content {
+        padding: 15px 0;
+        font-size: 14px;
+        color: #555;
+    }
+
+    /* Stats cards */
+    .stat-card {
+        background: white;
+        border-radius: 8px;
+        padding: 15px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    }
+    .stat-card .stat-value {
+        font-size: 24px;
+        font-weight: bold;
+        color: #2c3e50;
+    }
+    .stat-card .stat-label {
+        font-size: 12px;
+        color: #95a5a6;
+        margin-top: 4px;
+    }
+    .stat-card.gradient-1 {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+    }
+    .stat-card.gradient-1 .stat-value,
+    .stat-card.gradient-1 .stat-label {
+        color: white;
+    }
+    .stat-card.gradient-2 {
+        background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+        color: white;
+    }
+    .stat-card.gradient-2 .stat-value,
+    .stat-card.gradient-2 .stat-label {
+        color: white;
+    }
+
+    /* Timeline */
+    .timeline {
+        position: relative;
+        margin: 15px 0;
+        padding-left: 30px;
+    }
+    .timeline::before {
+        content: "";
+        position: absolute;
+        left: 10px;
+        top: 0;
+        bottom: 0;
+        width: 2px;
+        background: #ecf0f1;
+    }
+    .timeline-item {
+        position: relative;
+        padding-bottom: 20px;
+    }
+    .timeline-item::before {
+        content: "";
+        position: absolute;
+        left: -24px;
+        top: 4px;
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: #3498db;
+        border: 2px solid white;
+        box-shadow: 0 0 0 2px #3498db;
+    }
+    .timeline-item .time {
+        font-size: 11px;
+        color: #95a5a6;
+        margin-bottom: 4px;
+    }
+    .timeline-item .content {
+        font-size: 13px;
+        color: #2c3e50;
+    }
+
+    /* Modal overlay preview */
+    .modal-preview {
+        background: rgba(0, 0, 0, 0.5);
+        border-radius: 8px;
+        padding: 30px;
+        margin: 15px 0;
+    }
+    .modal-box {
+        background: white;
+        border-radius: 12px;
+        padding: 20px;
+        max-width: 300px;
+        margin: 0 auto;
+        box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+    }
+    .modal-box h4 {
+        margin: 0 0 10px 0;
+        color: #2c3e50;
+    }
+    .modal-box p {
+        font-size: 13px;
+        color: #7f8c8d;
+        margin: 0 0 15px 0;
+    }
+
+    /* Skeleton loading */
+    .skeleton {
+        background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+        background-size: 200% 100%;
+        border-radius: 4px;
+        margin: 8px 0;
+    }
+    .skeleton-text {
+        height: 14px;
+        width: 80%;
+    }
+    .skeleton-title {
+        height: 20px;
+        width: 60%;
+    }
+    .skeleton-avatar {
+        width: 40px;
+        height: 40px;
+        border-radius: 50%;
+    }
+
+    /* Footer */
+    .footer {
+        background: #2c3e50;
+        color: #bdc3c7;
+        padding: 20px;
+        border-radius: 8px;
+        margin-top: 20px;
+        font-size: 13px;
+    }
+    .footer-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 20px;
+    }
+    .footer h5 {
+        color: white;
+        margin: 0 0 10px 0;
+        font-size: 14px;
+    }
+    .footer a {
+        color: #95a5a6;
+        text-decoration: none;
+        display: block;
+        padding: 3px 0;
+    }
+    .footer-bottom {
+        border-top: 1px solid #34495e;
+        margin-top: 20px;
+        padding-top: 15px;
+        text-align: center;
+        color: #7f8c8d;
+    }
+
+    /* Dropdown menu */
+    .dropdown {
+        position: relative;
+        display: inline-block;
+    }
+    .dropdown-trigger {
+        padding: 8px 16px;
+        background: #ecf0f1;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 14px;
+    }
+    .dropdown-menu {
+        position: absolute;
+        top: 100%;
+        left: 0;
+        background: white;
+        border-radius: 6px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+        min-width: 160px;
+        margin-top: 4px;
+        padding: 6px 0;
+    }
+    .dropdown-menu a {
+        display: block;
+        padding: 8px 16px;
+        color: #2c3e50;
+        text-decoration: none;
+        font-size: 13px;
+    }
+    .dropdown-menu a:hover {
+        background: #f8f9fa;
+    }
+
+    /* List group */
+    .list-group {
+        border: 1px solid #ecf0f1;
+        border-radius: 8px;
+        overflow: hidden;
+        margin: 10px 0;
+    }
+    .list-group-item {
+        padding: 12px 16px;
+        border-bottom: 1px solid #ecf0f1;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 14px;
+    }
+    .list-group-item:last-child {
+        border-bottom: none;
+    }
+    .list-group-item:hover {
+        background: #f8f9fa;
+    }
+    .list-group-item .badge {
+        background: #e74c3c;
+        color: white;
+        padding: 2px 8px;
+        border-radius: 10px;
+        font-size: 11px;
+    }
+
+    /* ============================================
+       OVERFLOW PROPERTY
+       ============================================ */
+    .overflow-demo {
+        display: flex;
+        gap: 15px;
+        flex-wrap: wrap;
+        margin: 10px 0;
+    }
+    .overflow-box {
+        width: 100px;
+        height: 60px;
+        border: 2px solid #3498db;
+        border-radius: 6px;
+        padding: 8px;
+        font-size: 11px;
+        background: #f8f9fa;
+    }
+    .overflow-visible { overflow: visible; }
+    .overflow-hidden { overflow: hidden; }
+    .overflow-scroll { overflow: scroll; }
+    .overflow-auto { overflow: auto; }
+
+    /* ============================================
+       MIX-BLEND-MODE
+       ============================================ */
+    .blend-container {
+        position: relative;
+        width: 250px;
+        height: 100px;
+        background: linear-gradient(90deg, #e74c3c, #3498db);
+        border-radius: 8px;
+        margin: 10px 0;
+    }
+    .blend-box {
+        position: absolute;
+        width: 70px;
+        height: 70px;
+        top: 15px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 9px;
+        color: white;
+        font-weight: bold;
+    }
+    .blend-multiply { left: 15px; background: #f1c40f; mix-blend-mode: multiply; }
+    .blend-screen { left: 90px; background: #9b59b6; mix-blend-mode: screen; }
+    .blend-overlay { left: 165px; background: #2ecc71; mix-blend-mode: overlay; }
+
+    /* ============================================
+       BLUR / FILTER EFFECTS
+       ============================================ */
+    .blur-demo {
+        display: flex;
+        gap: 15px;
+        margin: 10px 0;
+    }
+    .blur-box {
+        width: 70px;
+        height: 50px;
+        background: linear-gradient(135deg, #667eea, #764ba2);
+        border-radius: 8px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-size: 10px;
+    }
+    .blur-none { filter: blur(0); }
+    .blur-sm { filter: blur(2px); }
+    .blur-md { filter: blur(4px); }
+    .blur-lg { filter: blur(8px); }
+
+    .backdrop-blur-container {
+        position: relative;
+        background: linear-gradient(135deg, #e74c3c 0%, #f39c12 50%, #2ecc71 100%);
+        border-radius: 8px;
+        padding: 20px;
+        margin: 10px 0;
+    }
+    .backdrop-blur-box {
+        background: rgba(255, 255, 255, 0.2);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+        border-radius: 8px;
+        padding: 12px;
+        color: white;
+        font-size: 12px;
+    }
+
+    /* ============================================
+       TRANSFORM DEMOS
+       ============================================ */
+    .transform-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 15px;
+        margin: 15px 0;
+    }
+    .transform-item {
+        background: #3498db;
+        color: white;
+        padding: 15px;
+        border-radius: 8px;
+        text-align: center;
+        font-size: 11px;
+    }
+    .transform-rotate { transform: rotate(15deg); }
+    .transform-scale { transform: scale(1.15); }
+    .transform-skew { transform: skewX(-10deg); }
+    .transform-translate { transform: translate(8px, -4px); }
+    .transform-rotate-y { transform: rotateY(25deg); }
+    .transform-rotate-x { transform: rotateX(15deg); }
+    .transform-multiple { transform: rotate(8deg) scale(0.95) translateX(5px); }
+
+    /* Transform origin */
+    .origin-demo {
+        display: flex;
+        gap: 25px;
+        margin: 15px 0;
+        padding: 20px;
+    }
+    .origin-box {
+        width: 50px;
+        height: 50px;
+        background: #9b59b6;
+        color: white;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 9px;
+        transform: rotate(30deg);
+        text-align: center;
+    }
+    .origin-center { transform-origin: center; }
+    .origin-top-left { transform-origin: top left; }
+    .origin-bottom-right { transform-origin: bottom right; }
+
+    /* Perspective */
+    .perspective-container {
+        perspective: 300px;
+        perspective-origin: center;
+        padding: 20px;
+        margin: 10px 0;
+    }
+    .perspective-box {
+        width: 100px;
+        height: 60px;
+        background: linear-gradient(135deg, #11998e, #38ef7d);
+        color: white;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 8px;
+        transform: rotateY(30deg);
+        transform-style: preserve-3d;
+        font-size: 11px;
+    }
+
+    /* 3D Transform with preserve-3d */
+    .preserve-3d-demo {
+        perspective: 500px;
+        perspective-origin: 50% 50%;
+        height: 120px;
+        margin: 15px 0;
+    }
+    .cube-wrapper {
+        position: relative;
+        width: 60px;
+        height: 60px;
+        margin: 30px auto;
+        transform-style: preserve-3d;
+        transform: rotateX(-15deg) rotateY(25deg);
+    }
+    .cube-face {
+        position: absolute;
+        width: 60px;
+        height: 60px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 12px;
+        font-weight: bold;
+        color: white;
+    }
+    .cube-front { background: rgba(52, 152, 219, 0.9); transform: translateZ(30px); }
+    .cube-back { background: rgba(155, 89, 182, 0.9); transform: translateZ(-30px) rotateY(180deg); }
+    .cube-left { background: rgba(46, 204, 113, 0.9); transform: translateX(-30px) rotateY(-90deg); }
+    .cube-right { background: rgba(241, 196, 15, 0.9); transform: translateX(30px) rotateY(90deg); }
+    .cube-top { background: rgba(231, 76, 60, 0.9); transform: translateY(-30px) rotateX(90deg); }
+    .cube-bottom { background: rgba(52, 73, 94, 0.9); transform: translateY(30px) rotateX(-90deg); }
+
+    /* Backface visibility */
+    .backface-demo {
+        display: flex;
+        gap: 30px;
+        margin: 15px 0;
+        perspective: 300px;
+    }
+    .backface-card {
+        width: 80px;
+        height: 50px;
+        background: #e74c3c;
+        color: white;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 10px;
+        border-radius: 6px;
+        transform: rotateY(150deg);
+    }
+    .backface-visible { backface-visibility: visible; }
+    .backface-hidden { backface-visibility: hidden; }
+
+    /* ============================================
+       BACKGROUND PROPERTIES
+       ============================================ */
+    .bg-clip-demo {
+        display: flex;
+        gap: 15px;
+        flex-wrap: wrap;
+        margin: 10px 0;
+    }
+    .bg-clip-box {
+        width: 100px;
+        height: 70px;
+        padding: 12px;
+        background: linear-gradient(135deg, #667eea, #764ba2);
+        border: 8px dashed rgba(0,0,0,0.2);
+        color: white;
+        font-size: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+    }
+    .bg-clip-border { background-clip: border-box; }
+    .bg-clip-padding { background-clip: padding-box; }
+    .bg-clip-content { background-clip: content-box; }
+    .bg-clip-text-demo {
+        background: linear-gradient(90deg, #667eea, #764ba2, #f093fb);
+        -webkit-background-clip: text;
+        background-clip: text;
+        -webkit-text-fill-color: transparent;
+        font-size: 28px;
+        font-weight: bold;
+        margin: 10px 0;
+    }
+
+    /* ============================================
+       BORDER STYLES
+       ============================================ */
+    .border-demo {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+        margin: 10px 0;
+    }
+    .border-box {
+        width: 70px;
+        height: 45px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 9px;
+        background: #f8f9fa;
+        text-align: center;
+    }
+    .border-solid { border: 3px solid #3498db; }
+    .border-dashed { border: 3px dashed #e74c3c; }
+    .border-dotted { border: 3px dotted #2ecc71; }
+    .border-double { border: 4px double #9b59b6; }
+    .border-groove { border: 4px groove #f39c12; }
+    .border-ridge { border: 4px ridge #1abc9c; }
+    .border-inset { border: 4px inset #34495e; }
+    .border-outset { border: 4px outset #7f8c8d; }
+    .border-mixed {
+        border-top: 3px solid #e74c3c;
+        border-right: 3px dashed #3498db;
+        border-bottom: 3px dotted #2ecc71;
+        border-left: 3px double #f39c12;
+    }
+
+    /* Border radius variations */
+    .radius-demo {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+        margin: 10px 0;
+    }
+    .radius-box {
+        width: 60px;
+        height: 60px;
+        background: #3498db;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-size: 8px;
+        text-align: center;
+    }
+    .radius-none { border-radius: 0; }
+    .radius-sm { border-radius: 4px; }
+    .radius-md { border-radius: 12px; }
+    .radius-lg { border-radius: 20px; }
+    .radius-full { border-radius: 50%; }
+    .radius-pill { border-radius: 30px; width: 90px; }
+    .radius-asymmetric { border-radius: 20px 5px 25px 10px; }
+    .radius-elliptical { border-radius: 50% / 25%; }
+
+    /* Outline */
+    .outline-demo {
+        display: flex;
+        gap: 25px;
+        margin: 15px 0;
+    }
+    .outline-box {
+        width: 70px;
+        height: 45px;
+        background: #f8f9fa;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 9px;
+        text-align: center;
+    }
+    .outline-solid { outline: 3px solid #3498db; }
+    .outline-dashed { outline: 3px dashed #e74c3c; }
+    .outline-offset { outline: 3px solid #2ecc71; outline-offset: 4px; }
+
+    /* ============================================
+       TEXT PROPERTIES
+       ============================================ */
+    .text-fill-demo {
+        font-size: 24px;
+        font-weight: bold;
+        background: linear-gradient(90deg, #667eea, #764ba2, #f093fb);
+        -webkit-background-clip: text;
+        background-clip: text;
+        -webkit-text-fill-color: transparent;
+    }
+    .text-stroke-demo {
+        font-size: 28px;
+        font-weight: bold;
+        color: white;
+        -webkit-text-stroke: 2px #2c3e50;
+    }
+    .text-stroke-only {
+        font-size: 28px;
+        font-weight: bold;
+        -webkit-text-fill-color: transparent;
+        -webkit-text-stroke: 1px #3498db;
+    }
+
+    /* Font weights */
+    .font-light { font-weight: 300; }
+    .font-normal { font-weight: 400; }
+    .font-medium { font-weight: 500; }
+    .font-semibold { font-weight: 600; }
+    .font-bold { font-weight: 700; }
+
+    /* Letter spacing */
+    .letter-tight { letter-spacing: -1px; }
+    .letter-normal { letter-spacing: 0; }
+    .letter-wide { letter-spacing: 2px; }
+    .letter-wider { letter-spacing: 4px; }
+
+    /* Line height */
+    .line-tight { line-height: 1.0; }
+    .line-normal { line-height: 1.5; }
+    .line-relaxed { line-height: 2.0; }
+
+    /* Text transform */
+    .text-upper { text-transform: uppercase; }
+    .text-lower { text-transform: lowercase; }
+    .text-capitalize { text-transform: capitalize; }
+
+    /* Text decoration */
+    .text-underline { text-decoration: underline; }
+    .text-overline { text-decoration: overline; }
+    .text-line-through { text-decoration: line-through; }
+    .text-decoration-wavy { text-decoration: underline wavy #e74c3c; }
+    .text-decoration-double { text-decoration: underline double #3498db; }
+    .text-decoration-dotted { text-decoration: underline dotted #2ecc71; }
+
+    /* Text shadow */
+    .text-shadow-sm { text-shadow: 1px 1px 2px rgba(0,0,0,0.3); }
+    .text-shadow-md { text-shadow: 2px 2px 4px rgba(0,0,0,0.4); }
+    .text-shadow-lg { text-shadow: 3px 3px 6px rgba(0,0,0,0.5); }
+    .text-shadow-glow { text-shadow: 0 0 10px #3498db, 0 0 20px #3498db; }
+    .text-shadow-multi {
+        text-shadow: 1px 1px 0 #e74c3c, 2px 2px 0 #f39c12, 3px 3px 0 #2ecc71;
+    }
+
+    /* Writing mode */
+    .writing-vertical { writing-mode: vertical-rl; height: 80px; }
+    .writing-vertical-lr { writing-mode: vertical-lr; height: 80px; }
+    .text-rtl { direction: rtl; }
+
+    /* ============================================
+       BOX SHADOW VARIATIONS
+       ============================================ */
+    .shadow-demo {
+        display: flex;
+        gap: 15px;
+        flex-wrap: wrap;
+        margin: 15px 0;
+    }
+    .shadow-box {
+        width: 80px;
+        height: 55px;
+        background: white;
+        border-radius: 6px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 9px;
+        text-align: center;
+    }
+    .shadow-sm { box-shadow: 0 1px 3px rgba(0,0,0,0.12); }
+    .shadow-md { box-shadow: 0 4px 6px rgba(0,0,0,0.15); }
+    .shadow-lg { box-shadow: 0 10px 20px rgba(0,0,0,0.2); }
+    .shadow-xl { box-shadow: 0 15px 35px rgba(0,0,0,0.25); }
+    .shadow-colored { box-shadow: 0 8px 25px rgba(52, 152, 219, 0.4); }
+    .shadow-multi {
+        box-shadow:
+            0 2px 4px rgba(0,0,0,0.1),
+            0 8px 16px rgba(0,0,0,0.1);
+    }
+
+    /* Inset shadows */
+    .shadow-inset { box-shadow: inset 0 2px 6px rgba(0,0,0,0.2); }
+    .shadow-inset-deep { box-shadow: inset 0 4px 10px rgba(0,0,0,0.3); }
+    .shadow-inset-all { box-shadow: inset 0 0 8px rgba(0,0,0,0.2); }
+
+    /* Spread radius */
+    .shadow-spread-pos { box-shadow: 0 4px 8px 4px rgba(52,152,219,0.25); }
+    .shadow-spread-neg { box-shadow: 0 4px 15px -4px rgba(0,0,0,0.4); }
+    .shadow-spread-only { box-shadow: 0 0 0 4px #3498db; }
+
+    /* Combined shadows */
+    .shadow-combined {
+        box-shadow:
+            0 4px 10px rgba(0,0,0,0.15),
+            inset 0 -2px 4px rgba(0,0,0,0.1);
+    }
+    .shadow-neumorphic {
+        background: #e0e5ec;
+        box-shadow:
+            6px 6px 12px #a3b1c6,
+            -6px -6px 12px #ffffff;
+    }
+
+    /* ============================================
+       OPACITY VARIATIONS (extended)
+       ============================================ */
+    .opacity-grid {
+        display: flex;
+        gap: 8px;
+        margin: 10px 0;
+    }
+    .opacity-item {
+        width: 45px;
+        height: 45px;
+        background: #3498db;
+        border-radius: 6px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-size: 10px;
+    }
+
+    /* ============================================
+       IMAGES & OBJECT-FIT
+       ============================================ */
+    .image-demo {
+        display: flex;
+        gap: 15px;
+        flex-wrap: wrap;
+        margin: 10px 0;
+    }
+    .image-container {
+        width: 100px;
+        height: 80px;
+        border: 2px solid #ddd;
+        border-radius: 6px;
+        overflow: hidden;
+        position: relative;
+    }
+    .image-container img {
+        width: 100%;
+        height: 100%;
+    }
+    .object-cover img { object-fit: cover; }
+    .object-contain img { object-fit: contain; background: #f0f0f0; }
+    .object-fill img { object-fit: fill; }
+    .object-none img { object-fit: none; }
+    .object-scale-down img { object-fit: scale-down; background: #f0f0f0; }
+
+    .image-label {
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        background: rgba(0,0,0,0.7);
+        color: white;
+        font-size: 9px;
+        padding: 2px 4px;
+        text-align: center;
+    }
+
+    /* Image filters */
+    .filter-demo {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+        margin: 10px 0;
+    }
+    .filter-box {
+        width: 70px;
+        height: 70px;
+        border-radius: 6px;
+        overflow: hidden;
+    }
+    .filter-box img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+    }
+    .filter-grayscale img { filter: grayscale(100%); }
+    .filter-sepia img { filter: sepia(100%); }
+    .filter-saturate img { filter: saturate(200%); }
+    .filter-hue-rotate img { filter: hue-rotate(90deg); }
+    .filter-invert img { filter: invert(100%); }
+    .filter-brightness img { filter: brightness(150%); }
+    .filter-contrast img { filter: contrast(150%); }
+    .filter-combined img { filter: grayscale(50%) contrast(120%) brightness(110%); }
+
+    /* Aspect ratio */
+    .aspect-demo {
+        display: flex;
+        gap: 15px;
+        margin: 10px 0;
+    }
+    .aspect-box {
+        background: linear-gradient(135deg, #667eea, #764ba2);
+        border-radius: 6px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-size: 10px;
+    }
+    .aspect-1-1 { aspect-ratio: 1/1; width: 60px; }
+    .aspect-16-9 { aspect-ratio: 16/9; width: 100px; }
+    .aspect-4-3 { aspect-ratio: 4/3; width: 80px; }
+    .aspect-3-2 { aspect-ratio: 3/2; width: 75px; }
+
+    /* ============================================
+       SVG STYLES
+       ============================================ */
+    .svg-demo {
+        display: flex;
+        gap: 20px;
+        flex-wrap: wrap;
+        align-items: center;
+        margin: 10px 0;
+    }
+    .svg-icon {
+        width: 48px;
+        height: 48px;
+    }
+    .svg-icon-sm {
+        width: 24px;
+        height: 24px;
+    }
+    .svg-colored { fill: #3498db; }
+    .svg-gradient { fill: url(#iconGradient); }
+    .svg-stroked {
+        fill: none;
+        stroke: #e74c3c;
+        stroke-width: 2;
+    }
+    .svg-with-shadow {
+        filter: drop-shadow(2px 2px 4px rgba(0,0,0,0.3));
+    }
+
+    /* SVG animations (static representation) */
+    .svg-rotate {
+        transform: rotate(45deg);
+    }
+    .svg-scale {
+        transform: scale(1.2);
+    }
+
+    /* ============================================
+       GRADIENTS (RADIAL & CONIC)
+       ============================================ */
+    .gradient-demo {
+        display: flex;
+        gap: 15px;
+        flex-wrap: wrap;
+        margin: 10px 0;
+    }
+    .gradient-box {
+        width: 80px;
+        height: 80px;
+        border-radius: 8px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-size: 9px;
+        text-align: center;
+        text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+    }
+    .gradient-radial {
+        background: radial-gradient(circle, #667eea 0%, #764ba2 100%);
+    }
+    .gradient-radial-ellipse {
+        background: radial-gradient(ellipse at top left, #f093fb 0%, #f5576c 100%);
+    }
+    .gradient-conic {
+        background: conic-gradient(#667eea, #764ba2, #f093fb, #667eea);
+    }
+    .gradient-conic-from {
+        background: conic-gradient(from 45deg, #e74c3c, #f39c12, #2ecc71, #3498db, #9b59b6, #e74c3c);
+    }
+    .gradient-repeating-linear {
+        background: repeating-linear-gradient(45deg, #3498db, #3498db 10px, #2ecc71 10px, #2ecc71 20px);
+    }
+    .gradient-repeating-radial {
+        background: repeating-radial-gradient(circle, #667eea 0px, #667eea 10px, #764ba2 10px, #764ba2 20px);
+    }
+
+    /* ============================================
+       CSS MASKS
+       ============================================ */
+    .mask-demo {
+        display: flex;
+        gap: 20px;
+        margin: 10px 0;
+    }
+    .mask-box {
+        width: 100px;
+        height: 100px;
+        background: linear-gradient(135deg, #667eea, #764ba2);
+    }
+    .mask-circle {
+        -webkit-mask-image: radial-gradient(circle, black 40%, transparent 60%);
+        mask-image: radial-gradient(circle, black 40%, transparent 60%);
+    }
+    .mask-gradient {
+        -webkit-mask-image: linear-gradient(to right, black, transparent);
+        mask-image: linear-gradient(to right, black, transparent);
+    }
+    .mask-diagonal {
+        -webkit-mask-image: linear-gradient(135deg, black 50%, transparent 50%);
+        mask-image: linear-gradient(135deg, black 50%, transparent 50%);
+    }
+
+    /* ============================================
+       Z-INDEX & STACKING
+       ============================================ */
+    .stacking-demo {
+        position: relative;
+        height: 120px;
+        margin: 10px 0;
+    }
+    .stack-box {
+        position: absolute;
+        width: 80px;
+        height: 80px;
+        border-radius: 8px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-size: 11px;
+        font-weight: bold;
+    }
+    .stack-1 { background: #e74c3c; left: 0; top: 0; z-index: 1; }
+    .stack-2 { background: #3498db; left: 30px; top: 15px; z-index: 2; }
+    .stack-3 { background: #2ecc71; left: 60px; top: 30px; z-index: 3; }
+    .stack-4 { background: #f39c12; left: 90px; top: 10px; z-index: 2; }
+
+    /* ============================================
+       CSS GRID LAYOUT
+       ============================================ */
+    .grid-demo {
+        display: grid;
+        gap: 8px;
+        margin: 10px 0;
+    }
+    .grid-basic {
+        grid-template-columns: repeat(3, 1fr);
+    }
+    .grid-asymmetric {
+        grid-template-columns: 2fr 1fr 1fr;
+    }
+    .grid-auto-fill {
+        grid-template-columns: repeat(auto-fill, minmax(60px, 1fr));
+    }
+    .grid-item {
+        background: #3498db;
+        color: white;
+        padding: 12px;
+        border-radius: 6px;
+        text-align: center;
+        font-size: 11px;
+    }
+    .grid-span-2 { grid-column: span 2; }
+    .grid-span-row { grid-row: span 2; }
+
+    /* ============================================
+       POSITION STICKY
+       ============================================ */
+    .sticky-container {
+        height: 150px;
+        overflow-y: auto;
+        border: 2px solid #ddd;
+        border-radius: 8px;
+        margin: 10px 0;
+    }
+    .sticky-header {
+        position: sticky;
+        top: 0;
+        background: #3498db;
+        color: white;
+        padding: 10px;
+        font-weight: bold;
+        font-size: 12px;
+    }
+    .sticky-content {
+        padding: 10px;
+        font-size: 12px;
+    }
+
+    /* ============================================
+       MULTI-COLUMN LAYOUT
+       ============================================ */
+    .columns-demo {
+        column-count: 3;
+        column-gap: 20px;
+        column-rule: 1px solid #ddd;
+        margin: 10px 0;
+        font-size: 12px;
+    }
+
+    /* ============================================
+       LIST STYLES
+       ============================================ */
+    .list-demo {
+        margin: 10px 0;
+        font-size: 13px;
+    }
+    .list-disc { list-style-type: disc; }
+    .list-circle { list-style-type: circle; }
+    .list-square { list-style-type: square; }
+    .list-decimal { list-style-type: decimal; }
+    .list-alpha { list-style-type: lower-alpha; }
+    .list-roman { list-style-type: upper-roman; }
+    .list-none { list-style-type: none; padding-left: 0; }
+
+    /* ============================================
+       BORDER IMAGE
+       ============================================ */
+    .border-image-demo {
+        display: flex;
+        gap: 20px;
+        margin: 10px 0;
+    }
+    .border-image-box {
+        width: 100px;
+        height: 60px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 10px;
+        text-align: center;
+    }
+    .border-gradient-box {
+        border: 4px solid;
+        border-image: linear-gradient(45deg, #667eea, #764ba2) 1;
+    }
+    .border-gradient-box-2 {
+        border: 4px solid;
+        border-image: linear-gradient(90deg, #e74c3c, #f39c12, #2ecc71, #3498db) 1;
+    }
+
+    /* ============================================
+       FLEXBOX EDGE CASES
+       ============================================ */
+    .flex-demo {
+        display: flex;
+        gap: 8px;
+        margin: 10px 0;
+        padding: 10px;
+        background: #f0f0f0;
+        border-radius: 8px;
+    }
+    .flex-item {
+        background: #3498db;
+        color: white;
+        padding: 10px;
+        border-radius: 4px;
+        font-size: 11px;
+    }
+    .flex-grow-1 { flex-grow: 1; }
+    .flex-grow-2 { flex-grow: 2; }
+    .flex-shrink-0 { flex-shrink: 0; width: 100px; }
+    .flex-basis { flex-basis: 150px; }
+
+    .flex-wrap-demo {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin: 10px 0;
+    }
+    .flex-wrap-item {
+        background: #9b59b6;
+        color: white;
+        padding: 8px 16px;
+        border-radius: 4px;
+        font-size: 11px;
+    }
+
+    /* ============================================
+       PSEUDO-ELEMENTS VISUALIZATION
+       ============================================ */
+    .pseudo-demo {
+        margin: 15px 0;
+    }
+    .pseudo-before {
+        position: relative;
+        padding-left: 25px;
+        font-size: 14px;
+    }
+    .pseudo-before::before {
+        content: "★";
+        position: absolute;
+        left: 0;
+        color: #f39c12;
+    }
+    .pseudo-after {
+        position: relative;
+        padding-right: 30px;
+        font-size: 14px;
+    }
+    .pseudo-after::after {
+        content: "NEW";
+        position: absolute;
+        right: 0;
+        background: #e74c3c;
+        color: white;
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-size: 10px;
+    }
+    .pseudo-quotes {
+        font-size: 14px;
+        font-style: italic;
+        color: #555;
+    }
+    .pseudo-quotes::before { content: open-quote; }
+    .pseudo-quotes::after { content: close-quote; }
+
+    /* First-letter and first-line */
+    .first-letter-demo::first-letter {
+        font-size: 2em;
+        font-weight: bold;
+        color: #3498db;
+        float: left;
+        line-height: 1;
+        margin-right: 5px;
+    }
+    .first-line-demo::first-line {
+        font-weight: bold;
+        color: #2c3e50;
+    }
+
+    /* ============================================
+       COUNTER STYLES
+       ============================================ */
+    .counter-list {
+        counter-reset: custom-counter;
+        list-style: none;
+        padding-left: 0;
+        margin: 10px 0;
+    }
+    .counter-list li {
+        counter-increment: custom-counter;
+        padding: 8px 0 8px 35px;
+        position: relative;
+        font-size: 13px;
+    }
+    .counter-list li::before {
+        content: counter(custom-counter);
+        position: absolute;
+        left: 0;
+        width: 24px;
+        height: 24px;
+        background: #3498db;
+        color: white;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 11px;
+        font-weight: bold;
+    }
+
+    /* ============================================
+       VISIBILITY & DISPLAY
+       ============================================ */
+    .visibility-demo {
+        display: flex;
+        gap: 15px;
+        align-items: center;
+        margin: 10px 0;
+    }
+    .vis-box {
+        width: 60px;
+        height: 40px;
+        background: #3498db;
+        border-radius: 4px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-size: 10px;
+    }
+    .vis-hidden { visibility: hidden; }
+    .vis-collapse { visibility: collapse; }
+
+    /* ============================================
+       CURSOR STYLES
+       ============================================ */
+    .cursor-demo {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin: 10px 0;
+    }
+    .cursor-box {
+        padding: 8px 12px;
+        background: #ecf0f1;
+        border-radius: 4px;
+        font-size: 11px;
+    }
+    .cursor-pointer { cursor: pointer; }
+    .cursor-grab { cursor: grab; }
+    .cursor-crosshair { cursor: crosshair; }
+    .cursor-not-allowed { cursor: not-allowed; }
+    .cursor-zoom-in { cursor: zoom-in; }
+    .cursor-text { cursor: text; }
+
+    /* ============================================
+       TABLE BORDER STYLES
+       ============================================ */
+    .table-styled {
+        width: 100%;
+        margin: 10px 0;
+        font-size: 12px;
+    }
+    .table-bordered {
+        border-collapse: collapse;
+    }
+    .table-bordered th,
+    .table-bordered td {
+        border: 1px solid #ddd;
+        padding: 8px;
+    }
+    .table-bordered th {
+        background: #3498db;
+        color: white;
+    }
+    .table-separated {
+        border-collapse: separate;
+        border-spacing: 5px;
+    }
+    .table-separated th,
+    .table-separated td {
+        border: 1px solid #ddd;
+        padding: 8px;
+        border-radius: 4px;
+    }
+    .table-separated th {
+        background: #2ecc71;
+        color: white;
+    }
+</style>
+
+<script>
+    function changeText() {
+        document.querySelector("#dynamic-text").textContent = "Text has been changed!";
+    }
+    function toggleVisibility() {
+        const el = document.querySelector(".toggle-target");
+        el.style.opacity = el.style.opacity === "0.3" ? "1" : "0.3";
+    }
+</script>
+
+<body>
+    <!-- Main card container -->
+    <div class="card">
+        <h2>Complex UI Demo</h2>
+        <p id="dynamic-text">This text can be changed dynamically.</p>
+
+        <!-- Transformed box -->
+        <div class="transformed-box">
+            <strong>Transformed Element</strong><br>
+            Rotated and scaled with CSS transforms
+        </div>
+
+        <!-- Opacity demo -->
+        <p><strong>Opacity Variations:</strong></p>
+        <div class="opacity-demo">
+            <div class="opacity-box" style="opacity: 1">100%</div>
+            <div class="opacity-box" style="opacity: 0.75">75%</div>
+            <div class="opacity-box" style="opacity: 0.5">50%</div>
+            <div class="opacity-box" style="opacity: 0.25">25%</div>
+        </div>
+
+        <!-- Semi-transparent overlay -->
+        <div class="overlay-container">
+            <span>Content with overlay</span>
+            <div class="overlay"></div>
+        </div>
+
+        <!-- Clipped element -->
+        <div class="clipped">
+            Clipped with clip-path polygon
+        </div>
+
+        <!-- Nested transforms -->
+        <div class="outer-transform">
+            <div class="inner-transform">
+                Nested CSS Transforms (perspective + skew)
+            </div>
+        </div>
+
+        <!-- Nested rounded borders -->
+        <div class="nested-rounded">
+            <div class="inner">
+                Nested rounded corners
+                <div class="innermost">
+                    Deeply nested element
+                </div>
+            </div>
+        </div>
+
+        <!-- Progress bar -->
+        <p><strong>Progress:</strong></p>
+        <div class="progress-bar">
+            <div class="fill"></div>
+        </div>
+
+        <!-- Tags -->
+        <div class="tags">
+            <span class="tag active">Active</span>
+            <span class="tag">Design</span>
+            <span class="tag">CSS</span>
+            <span class="tag">Transforms</span>
+        </div>
+    </div>
+
+    <!-- Form card -->
+    <div class="card">
+        <h3>Form Elements</h3>
+
+        <div class="form-group">
+            <label>Text Input</label>
+            <input type="text" placeholder="Enter your name">
+        </div>
+
+        <div class="form-group">
+            <label>Email Input</label>
+            <input type="email" placeholder="you@example.com">
+        </div>
+
+        <div class="form-group">
+            <label>Password Input</label>
+            <input type="password" placeholder="Password">
+        </div>
+
+        <div class="form-group">
+            <label>Dropdown Select</label>
+            <select>
+                <option>Option 1</option>
+                <option>Option 2</option>
+                <option>Option 3</option>
+            </select>
+        </div>
+
+        <div class="form-group">
+            <label>Range Slider</label>
+            <input type="range" min="0" max="100" value="50">
+        </div>
+
+        <div class="form-group">
+            <label>Textarea</label>
+            <textarea placeholder="Write something..."></textarea>
+        </div>
+
+        <div class="form-group">
+            <label>Checkboxes</label>
+            <div class="checkbox-group">
+                <label><input type="checkbox" checked> Option A</label>
+                <label><input type="checkbox"> Option B</label>
+                <label><input type="checkbox"> Option C</label>
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label>Radio Buttons</label>
+            <div class="checkbox-group">
+                <label><input type="radio" name="radio-demo" checked> Choice 1</label>
+                <label><input type="radio" name="radio-demo"> Choice 2</label>
+                <label><input type="radio" name="radio-demo"> Choice 3</label>
+            </div>
+        </div>
+    </div>
+
+    <!-- Buttons card -->
+    <div class="card">
+        <h3>Buttons</h3>
+        <div class="button-row">
+            <button class="btn btn-primary" onclick="changeText()">Primary</button>
+            <button class="btn btn-success">Success</button>
+            <button class="btn btn-warning">Warning</button>
+            <button class="btn btn-danger">Danger</button>
+            <button class="btn btn-outline" onclick="toggleVisibility()">Toggle</button>
+        </div>
+
+        <div class="toggle-target" style="margin-top: 15px; padding: 15px; background: #f8f8f8; border-radius: 8px;">
+            <p>This element's opacity can be toggled.</p>
+        </div>
+    </div>
+
+    <!-- Data table card -->
+    <div class="card">
+        <h3>Data Table</h3>
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Email</th>
+                    <th>Status</th>
+                    <th>Role</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>John Smith</td>
+                    <td>john@example.com</td>
+                    <td><span class="status-badge status-active">Active</span></td>
+                    <td>Admin</td>
+                </tr>
+                <tr>
+                    <td>Sarah Johnson</td>
+                    <td>sarah@example.com</td>
+                    <td><span class="status-badge status-active">Active</span></td>
+                    <td>Editor</td>
+                </tr>
+                <tr>
+                    <td>Mike Wilson</td>
+                    <td>mike@example.com</td>
+                    <td><span class="status-badge status-pending">Pending</span></td>
+                    <td>Viewer</td>
+                </tr>
+                <tr>
+                    <td>Emily Brown</td>
+                    <td>emily@example.com</td>
+                    <td><span class="status-badge status-inactive">Inactive</span></td>
+                    <td>Viewer</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <!-- User cards and avatars -->
+    <div class="card">
+        <h3>Team Members</h3>
+        <div class="user-card">
+            <div class="avatar">JD</div>
+            <div class="user-info">
+                <div class="name">Jane Doe</div>
+                <div class="role">Senior Developer</div>
+            </div>
+        </div>
+        <div class="user-card">
+            <div class="avatar" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">AB</div>
+            <div class="user-info">
+                <div class="name">Alex Brown</div>
+                <div class="role">Product Manager</div>
+            </div>
+        </div>
+        <div class="user-card">
+            <div class="avatar" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);">CW</div>
+            <div class="user-info">
+                <div class="name">Chris Wilson</div>
+                <div class="role">UX Designer</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tabs -->
+    <div class="card">
+        <h3>Tabbed Content</h3>
+        <div class="tabs">
+            <div class="tab active">Overview</div>
+            <div class="tab">Analytics</div>
+            <div class="tab">Reports</div>
+            <div class="tab">Settings</div>
+        </div>
+        <div class="tab-content">
+            This is the content of the Overview tab. You can switch between different tabs to view different content sections.
+        </div>
+    </div>
+
+    <!-- Search and dropdown -->
+    <div class="card">
+        <h3>Search & Navigation</h3>
+        <div class="search-box">
+            <input type="text" placeholder="Search for anything...">
+            <button>Search</button>
+        </div>
+
+        <div style="margin-top: 15px;">
+            <div class="dropdown">
+                <button class="dropdown-trigger">Select Option</button>
+                <div class="dropdown-menu">
+                    <a href="#">Edit Profile</a>
+                    <a href="#">Account Settings</a>
+                    <a href="#">Notifications</a>
+                    <a href="#">Sign Out</a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- List group -->
+    <div class="card">
+        <h3>Notifications</h3>
+        <div class="list-group">
+            <div class="list-group-item">
+                <span>New message from support</span>
+                <span class="badge">New</span>
+            </div>
+            <div class="list-group-item">
+                <span>Your order has been shipped</span>
+                <span class="badge">2</span>
+            </div>
+            <div class="list-group-item">
+                <span>Password changed successfully</span>
+            </div>
+            <div class="list-group-item">
+                <span>Weekly report is ready</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Timeline -->
+    <div class="card">
+        <h3>Activity Timeline</h3>
+        <div class="timeline">
+            <div class="timeline-item">
+                <div class="time">2 hours ago</div>
+                <div class="content">New user registration: john.doe@email.com</div>
+            </div>
+            <div class="timeline-item">
+                <div class="time">5 hours ago</div>
+                <div class="content">Payment received: $299.00 for Pro Plan</div>
+            </div>
+            <div class="timeline-item">
+                <div class="time">Yesterday</div>
+                <div class="content">System update completed successfully</div>
+            </div>
+            <div class="timeline-item">
+                <div class="time">2 days ago</div>
+                <div class="content">New feature deployed: Dark mode support</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Pricing card -->
+    <div class="card">
+        <h3>Pricing</h3>
+        <div class="pricing-card featured">
+            <div class="plan-name">Professional</div>
+            <div class="price">$29<span>/month</span></div>
+            <div class="features">
+                <div>Unlimited projects</div>
+                <div>Priority support</div>
+                <div>Advanced analytics</div>
+                <div>Custom integrations</div>
+            </div>
+            <button class="btn btn-primary" style="width: 100%;">Choose Plan</button>
+        </div>
+    </div>
+
+    <!-- ============================================
+         OVERFLOW PROPERTY DEMO
+         ============================================ -->
+    <div class="card">
+        <h3>Overflow Property</h3>
+        <div class="overflow-demo">
+            <div class="overflow-box overflow-visible">
+                <div style="background: #e74c3c; color: white; padding: 5px;">Visible: This content overflows the container boundaries</div>
+            </div>
+            <div class="overflow-box overflow-hidden">
+                <div style="background: #3498db; color: white; padding: 5px;">Hidden: This content is clipped at boundaries</div>
+            </div>
+            <div class="overflow-box overflow-scroll">
+                <div style="background: #2ecc71; color: white; padding: 5px;">Scroll: This content has scrollbars always</div>
+            </div>
+            <div class="overflow-box overflow-auto">
+                <div style="background: #9b59b6; color: white; padding: 5px;">Auto: Scrollbars appear when needed</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ============================================
+         MIX-BLEND-MODE DEMO
+         ============================================ -->
+    <div class="card">
+        <h3>Mix Blend Mode</h3>
+        <div class="blend-container">
+            <div class="blend-box blend-multiply">multiply</div>
+            <div class="blend-box blend-screen">screen</div>
+            <div class="blend-box blend-overlay">overlay</div>
+        </div>
+    </div>
+
+    <!-- ============================================
+         BLUR / FILTER EFFECTS
+         ============================================ -->
+    <div class="card">
+        <h3>Blur Effects</h3>
+        <p style="font-size: 12px; color: #666;">Filter blur:</p>
+        <div class="blur-demo">
+            <div class="blur-box blur-none">0px</div>
+            <div class="blur-box blur-sm">2px</div>
+            <div class="blur-box blur-md">4px</div>
+            <div class="blur-box blur-lg">8px</div>
+        </div>
+        <p style="font-size: 12px; color: #666; margin-top: 15px;">Backdrop blur:</p>
+        <div class="backdrop-blur-container">
+            <div class="backdrop-blur-box">
+                Content with backdrop-filter blur effect
+            </div>
+        </div>
+    </div>
+
+    <!-- ============================================
+         TRANSFORM DEMOS
+         ============================================ -->
+    <div class="card">
+        <h3>CSS Transforms</h3>
+        <p style="font-size: 12px; color: #666;">Basic transforms:</p>
+        <div class="transform-grid">
+            <div class="transform-item transform-rotate">rotate(15deg)</div>
+            <div class="transform-item transform-scale">scale(1.15)</div>
+            <div class="transform-item transform-skew">skewX(-10deg)</div>
+            <div class="transform-item transform-translate">translate</div>
+        </div>
+        <p style="font-size: 12px; color: #666; margin-top: 15px;">3D transforms:</p>
+        <div class="transform-grid">
+            <div class="transform-item transform-rotate-y">rotateY(25deg)</div>
+            <div class="transform-item transform-rotate-x">rotateX(15deg)</div>
+            <div class="transform-item transform-multiple">combined</div>
+            <div class="transform-item" style="transform: rotate3d(1, 1, 0, 20deg);">rotate3d</div>
+        </div>
+    </div>
+
+    <!-- Transform Origin -->
+    <div class="card">
+        <h3>Transform Origin</h3>
+        <div class="origin-demo">
+            <div class="origin-box origin-center">center</div>
+            <div class="origin-box origin-top-left">top left</div>
+            <div class="origin-box origin-bottom-right">bottom right</div>
+        </div>
+    </div>
+
+    <!-- Perspective -->
+    <div class="card">
+        <h3>Perspective</h3>
+        <div class="perspective-container">
+            <div class="perspective-box">rotateY with perspective</div>
+        </div>
+    </div>
+
+    <!-- 3D Cube with preserve-3d -->
+    <div class="card">
+        <h3>3D Transform (preserve-3d)</h3>
+        <div class="preserve-3d-demo">
+            <div class="cube-wrapper">
+                <div class="cube-face cube-front">F</div>
+                <div class="cube-face cube-back">B</div>
+                <div class="cube-face cube-left">L</div>
+                <div class="cube-face cube-right">R</div>
+                <div class="cube-face cube-top">T</div>
+                <div class="cube-face cube-bottom">Bo</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Backface Visibility -->
+    <div class="card">
+        <h3>Backface Visibility</h3>
+        <div class="backface-demo">
+            <div class="backface-card backface-visible">visible</div>
+            <div class="backface-card backface-hidden">hidden</div>
+        </div>
+    </div>
+
+    <!-- ============================================
+         BACKGROUND PROPERTIES
+         ============================================ -->
+    <div class="card">
+        <h3>Background Clip</h3>
+        <div class="bg-clip-demo">
+            <div class="bg-clip-box bg-clip-border">border-box</div>
+            <div class="bg-clip-box bg-clip-padding">padding-box</div>
+            <div class="bg-clip-box bg-clip-content">content-box</div>
+        </div>
+        <div class="bg-clip-text-demo">Gradient Text Clip</div>
+    </div>
+
+    <!-- ============================================
+         BORDER STYLES
+         ============================================ -->
+    <div class="card">
+        <h3>Border Styles</h3>
+        <div class="border-demo">
+            <div class="border-box border-solid">solid</div>
+            <div class="border-box border-dashed">dashed</div>
+            <div class="border-box border-dotted">dotted</div>
+            <div class="border-box border-double">double</div>
+            <div class="border-box border-groove">groove</div>
+            <div class="border-box border-ridge">ridge</div>
+            <div class="border-box border-inset">inset</div>
+            <div class="border-box border-outset">outset</div>
+            <div class="border-box border-mixed">mixed</div>
+        </div>
+    </div>
+
+    <!-- Border Radius Variations -->
+    <div class="card">
+        <h3>Border Radius</h3>
+        <div class="radius-demo">
+            <div class="radius-box radius-none">0</div>
+            <div class="radius-box radius-sm">4px</div>
+            <div class="radius-box radius-md">12px</div>
+            <div class="radius-box radius-lg">20px</div>
+            <div class="radius-box radius-full">50%</div>
+            <div class="radius-box radius-pill">pill</div>
+            <div class="radius-box radius-asymmetric">asym</div>
+            <div class="radius-box radius-elliptical">ellipse</div>
+        </div>
+    </div>
+
+    <!-- Outline -->
+    <div class="card">
+        <h3>Outline</h3>
+        <div class="outline-demo">
+            <div class="outline-box outline-solid">solid</div>
+            <div class="outline-box outline-dashed">dashed</div>
+            <div class="outline-box outline-offset">offset 4px</div>
+        </div>
+    </div>
+
+    <!-- ============================================
+         TEXT PROPERTIES
+         ============================================ -->
+    <div class="card">
+        <h3>Text Fill & Stroke</h3>
+        <div class="text-fill-demo">Gradient Fill Text</div>
+        <div class="text-stroke-demo">Stroked Text</div>
+        <div class="text-stroke-only">Stroke Only</div>
+    </div>
+
+    <div class="card">
+        <h3>Font Weights</h3>
+        <div class="font-light">Light (300)</div>
+        <div class="font-normal">Normal (400)</div>
+        <div class="font-medium">Medium (500)</div>
+        <div class="font-semibold">Semibold (600)</div>
+        <div class="font-bold">Bold (700)</div>
+    </div>
+
+    <div class="card">
+        <h3>Letter Spacing</h3>
+        <div class="letter-tight">Tight spacing (-1px)</div>
+        <div class="letter-normal">Normal spacing</div>
+        <div class="letter-wide">Wide spacing (2px)</div>
+        <div class="letter-wider">Wider spacing (4px)</div>
+    </div>
+
+    <div class="card">
+        <h3>Text Transform</h3>
+        <div class="text-upper">uppercase text</div>
+        <div class="text-lower">LOWERCASE TEXT</div>
+        <div class="text-capitalize">capitalize each word</div>
+    </div>
+
+    <div class="card">
+        <h3>Text Decoration</h3>
+        <div class="text-underline">Underlined text</div>
+        <div class="text-overline">Overlined text</div>
+        <div class="text-line-through">Strikethrough text</div>
+        <div class="text-decoration-wavy">Wavy underline</div>
+        <div class="text-decoration-double">Double underline</div>
+        <div class="text-decoration-dotted">Dotted underline</div>
+    </div>
+
+    <div class="card">
+        <h3>Text Shadow</h3>
+        <div style="font-size: 18px;">
+            <div class="text-shadow-sm">Small shadow</div>
+            <div class="text-shadow-md">Medium shadow</div>
+            <div class="text-shadow-lg">Large shadow</div>
+            <div class="text-shadow-glow" style="color: #2c3e50;">Glow effect</div>
+            <div class="text-shadow-multi">Multi-layer shadow</div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h3>Writing Mode & Direction</h3>
+        <div style="display: flex; gap: 20px; align-items: flex-start;">
+            <div class="writing-vertical" style="background: #f0f0f0; padding: 10px; border-radius: 4px;">Vertical RL</div>
+            <div class="writing-vertical-lr" style="background: #f0f0f0; padding: 10px; border-radius: 4px;">Vertical LR</div>
+            <div class="text-rtl" dir="rtl" style="background: #f0f0f0; padding: 10px; border-radius: 4px; width: 150px;">RTL Direction Text</div>
+        </div>
+    </div>
+
+    <!-- ============================================
+         BOX SHADOW VARIATIONS
+         ============================================ -->
+    <div class="card">
+        <h3>Box Shadow - Basic</h3>
+        <div class="shadow-demo">
+            <div class="shadow-box shadow-sm">small</div>
+            <div class="shadow-box shadow-md">medium</div>
+            <div class="shadow-box shadow-lg">large</div>
+            <div class="shadow-box shadow-xl">x-large</div>
+            <div class="shadow-box shadow-colored">colored</div>
+            <div class="shadow-box shadow-multi">multi</div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h3>Box Shadow - Inset</h3>
+        <div class="shadow-demo">
+            <div class="shadow-box shadow-inset">inset</div>
+            <div class="shadow-box shadow-inset-deep">deep inset</div>
+            <div class="shadow-box shadow-inset-all">all sides</div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h3>Box Shadow - Spread Radius</h3>
+        <div class="shadow-demo">
+            <div class="shadow-box shadow-spread-pos">positive</div>
+            <div class="shadow-box shadow-spread-neg">negative</div>
+            <div class="shadow-box shadow-spread-only">spread only</div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h3>Box Shadow - Combined</h3>
+        <div class="shadow-demo">
+            <div class="shadow-box shadow-combined">combined</div>
+            <div class="shadow-box shadow-neumorphic">neumorphic</div>
+        </div>
+    </div>
+
+    <!-- ============================================
+         IMAGES & OBJECT-FIT
+         ============================================ -->
+    <div class="card">
+        <h3>Images & Object-Fit</h3>
+        <p style="font-size: 12px; color: #666;">How images fill their containers:</p>
+        <div class="image-demo">
+            <div class="image-container object-cover">
+                <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='150' viewBox='0 0 200 150'%3E%3Crect fill='%233498db' width='200' height='150'/%3E%3Ccircle cx='100' cy='75' r='40' fill='%23e74c3c'/%3E%3Crect x='30' y='100' width='140' height='30' fill='%232ecc71'/%3E%3C/svg%3E" alt="test">
+                <div class="image-label">cover</div>
+            </div>
+            <div class="image-container object-contain">
+                <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='150' viewBox='0 0 200 150'%3E%3Crect fill='%233498db' width='200' height='150'/%3E%3Ccircle cx='100' cy='75' r='40' fill='%23e74c3c'/%3E%3Crect x='30' y='100' width='140' height='30' fill='%232ecc71'/%3E%3C/svg%3E" alt="test">
+                <div class="image-label">contain</div>
+            </div>
+            <div class="image-container object-fill">
+                <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='150' viewBox='0 0 200 150'%3E%3Crect fill='%233498db' width='200' height='150'/%3E%3Ccircle cx='100' cy='75' r='40' fill='%23e74c3c'/%3E%3Crect x='30' y='100' width='140' height='30' fill='%232ecc71'/%3E%3C/svg%3E" alt="test">
+                <div class="image-label">fill</div>
+            </div>
+            <div class="image-container object-none">
+                <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='150' viewBox='0 0 200 150'%3E%3Crect fill='%233498db' width='200' height='150'/%3E%3Ccircle cx='100' cy='75' r='40' fill='%23e74c3c'/%3E%3Crect x='30' y='100' width='140' height='30' fill='%232ecc71'/%3E%3C/svg%3E" alt="test">
+                <div class="image-label">none</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ============================================
+         PNG IMAGES
+         ============================================ -->
+    <div class="card">
+        <h3>PNG Images</h3>
+        <p style="font-size: 12px; color: #666;">Actual PNG images (external URLs):</p>
+        <div class="image-demo">
+            <div class="image-container object-cover">
+                <img src="https://picsum.photos/200/150" alt="Random photo 1">
+                <div class="image-label">photo 1</div>
+            </div>
+            <div class="image-container object-cover">
+                <img src="https://picsum.photos/200/151" alt="Random photo 2">
+                <div class="image-label">photo 2</div>
+            </div>
+            <div class="image-container object-contain">
+                <img src="https://picsum.photos/200/152" alt="Random photo 3">
+                <div class="image-label">contain</div>
+            </div>
+            <div class="image-container object-fill">
+                <img src="https://picsum.photos/200/153" alt="Random photo 4">
+                <div class="image-label">fill</div>
+            </div>
+        </div>
+        <p style="font-size: 12px; color: #666; margin-top: 15px;">PNG with various sizes:</p>
+        <div class="image-demo">
+            <div class="image-container" style="width: 60px; height: 60px;">
+                <img src="https://picsum.photos/60/60" alt="Square small" style="width: 100%; height: 100%; object-fit: cover;">
+                <div class="image-label">60x60</div>
+            </div>
+            <div class="image-container" style="width: 120px; height: 80px;">
+                <img src="https://picsum.photos/120/80" alt="Wide" style="width: 100%; height: 100%; object-fit: cover;">
+                <div class="image-label">120x80</div>
+            </div>
+            <div class="image-container" style="width: 80px; height: 120px;">
+                <img src="https://picsum.photos/80/120" alt="Tall" style="width: 100%; height: 100%; object-fit: cover;">
+                <div class="image-label">80x120</div>
+            </div>
+        </div>
+        <p style="font-size: 12px; color: #666; margin-top: 15px;">PNG with border-radius:</p>
+        <div class="image-demo">
+            <div class="image-container" style="border-radius: 50%; width: 80px; height: 80px;">
+                <img src="https://picsum.photos/80/80" alt="Circle" style="width: 100%; height: 100%; object-fit: cover; border-radius: 50%;">
+            </div>
+            <div class="image-container" style="border-radius: 16px; width: 100px; height: 80px;">
+                <img src="https://picsum.photos/100/80" alt="Rounded" style="width: 100%; height: 100%; object-fit: cover; border-radius: 14px;">
+            </div>
+        </div>
+    </div>
+
+    <!-- ============================================
+         GRADIENTS (RADIAL & CONIC)
+         ============================================ -->
+    <div class="card">
+        <h3>Advanced Gradients</h3>
+        <div class="gradient-demo">
+            <div class="gradient-box gradient-radial">radial circle</div>
+            <div class="gradient-box gradient-radial-ellipse">radial ellipse</div>
+            <div class="gradient-box gradient-conic">conic</div>
+            <div class="gradient-box gradient-conic-from">conic from 45°</div>
+            <div class="gradient-box gradient-repeating-linear">repeating linear</div>
+            <div class="gradient-box gradient-repeating-radial">repeating radial</div>
+        </div>
+    </div>
+
+    <!-- ============================================
+         CSS MASKS
+         ============================================ -->
+    <div class="card">
+        <h3>CSS Masks</h3>
+        <div class="mask-demo">
+            <div class="mask-box mask-circle"></div>
+            <div class="mask-box mask-gradient"></div>
+            <div class="mask-box mask-diagonal"></div>
+        </div>
+    </div>
+
+    <!-- ============================================
+         Z-INDEX & STACKING
+         ============================================ -->
+    <div class="card">
+        <h3>Z-Index Stacking</h3>
+        <div class="stacking-demo">
+            <div class="stack-box stack-1">z: 1</div>
+            <div class="stack-box stack-2">z: 2</div>
+            <div class="stack-box stack-3">z: 3</div>
+            <div class="stack-box stack-4">z: 2</div>
+        </div>
+    </div>
+
+    <!-- ============================================
+         CSS GRID LAYOUT
+         ============================================ -->
+    <div class="card">
+        <h3>CSS Grid Layout</h3>
+        <p style="font-size: 12px; color: #666;">Basic 3-column grid:</p>
+        <div class="grid-demo grid-basic">
+            <div class="grid-item">1</div>
+            <div class="grid-item">2</div>
+            <div class="grid-item">3</div>
+            <div class="grid-item">4</div>
+            <div class="grid-item">5</div>
+            <div class="grid-item">6</div>
+        </div>
+        <p style="font-size: 12px; color: #666; margin-top: 15px;">Grid with span:</p>
+        <div class="grid-demo grid-basic">
+            <div class="grid-item grid-span-2">span 2 cols</div>
+            <div class="grid-item">3</div>
+            <div class="grid-item">4</div>
+            <div class="grid-item grid-span-2">span 2 cols</div>
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="footer-grid">
+            <div>
+                <h5>Product</h5>
+                <a href="#">Features</a>
+                <a href="#">Pricing</a>
+                <a href="#">Documentation</a>
+            </div>
+            <div>
+                <h5>Company</h5>
+                <a href="#">About Us</a>
+                <a href="#">Careers</a>
+                <a href="#">Contact</a>
+            </div>
+            <div>
+                <h5>Legal</h5>
+                <a href="#">Privacy Policy</a>
+                <a href="#">Terms of Service</a>
+                <a href="#">Cookie Policy</a>
+            </div>
+        </div>
+        <div class="footer-bottom">
+            2024 WebApp Inc. All rights reserved.
+        </div>
+    </footer>
+</body>
