@@ -1670,7 +1670,7 @@ async function main() {
         });
         statusEl.textContent = "CanvasKit loaded. Fetching raw paint ops data...";
 
-        const rawOpsRes = await fetch('draw.json');
+        const rawOpsRes = await fetch('../04_paint/reference/paint.json');
 
         if (!rawOpsRes.ok) {
             throw new Error(`HTTP Error: ${rawOpsRes.status}`);
