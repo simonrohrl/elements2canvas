@@ -88,9 +88,12 @@ Search Chromium paint code starting from paint_layer_painter.cc.
 
 3. Group related painters:
    - text_painter group: anything with text_, decoration_, highlight_ prefix
-   - block_painter group: block_, box_fragment_
-   - border_painter group: box_border_
-   - Create new groups for others
+   - block_painter group: block_, box_fragment_, box_model_
+   - border_painter group: box_border_, border_shape_
+   - svg_painter group: svg_* prefix
+   - table_painter group: table_* prefix
+   - For each remaining painter: create its own directory (e.g., outline_painter/, theme_painter/)
+   - NEVER create a "misc" or catch-all category
 
 4. For each group:
    - Create 04_paint/{group}/ directory if it doesn't exist

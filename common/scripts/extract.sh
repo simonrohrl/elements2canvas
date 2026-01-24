@@ -24,8 +24,4 @@ echo "=== 04_paint ==="
 "$PROJECT_DIR/04_paint/extract.sh"
 echo ""
 
-echo "=== 05_draw ==="
-"$PROJECT_DIR/05_draw/extract.sh"
-echo ""
-
 echo "Done."
